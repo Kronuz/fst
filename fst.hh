@@ -243,6 +243,65 @@ public:
 
 	bool contains(std::string_view key) const noexcept { return get(key).has_value(); }
 
+	// The value of the largest key <= key, without materializing that key: one pass
+	// down the key plus one descent to a subtree's maximum. No allocation.
+	std::optional<std::uint64_t> floor_value(std::string_view key) const noexcept {
+		const std::uint8_t* base = bytes_.data();
+		std::uint64_t out = 0, address = root_;
+		// The deepest candidate below key: either a prefix that is a key (value known) or
+		// the subtree under a smaller label (descend to its maximum at the end).
+		enum class kind { none, value, subtree } best = kind::none;
+		std::uint64_t best_value = 0, best_address = 0;
+		for (std::size_t d = 0;; ++d) {
+			const std::uint8_t* p = base + address;
+			const std::uint8_t h = *p++;
+			std::uint64_t final_out = (h & detail::final_output_bit) ? detail::get_varint(p) : 0;
+			if (d == key.size()) {
+				if (h & detail::final_bit) { return out + final_out; }
+				break;  // every key below is longer, so greater
+			}
+			if (h & detail::final_bit) { best = kind::value; best_value = out + final_out; }
+			const std::uint8_t c = std::uint8_t(key[d]);
+			if (h & detail::chain_bit) {
+				const std::uint8_t label = *p++;
+				std::uint64_t t_out = (h & detail::chain_output_bit) ? detail::get_varint(p) : 0;
+				std::uint64_t target = address - detail::get_varint(p);
+				if (label < c) { best = kind::subtree; best_value = out + t_out; best_address = target; break; }
+				if (label > c) { break; }
+				out += t_out;
+				address = target;
+				continue;
+			}
+			std::size_t count = h >> 3;
+			if (count == 31) { count += std::size_t(detail::get_varint(p)); }
+			if (!count) { break; }
+			const std::uint8_t* labels = p;
+			p += count;
+			const unsigned ob = *p & 0x0f, tb = *p >> 4;
+			++p;
+			std::size_t at = std::size_t(std::lower_bound(labels, labels + count, c) - labels);
+			if (at > 0) {  // labels[at - 1] < c: a smaller subtree
+				best = kind::subtree;
+				best_value = out + detail::get_le(p + (at - 1) * ob, ob);
+				best_address = address - detail::get_le(p + count * ob + (at - 1) * tb, tb);
+			}
+			if (at == count || labels[at] != c) { break; }
+			out += detail::get_le(p + at * ob, ob);
+			address -= detail::get_le(p + count * ob + at * tb, tb);
+		}
+		if (best == kind::none) { return std::nullopt; }
+		if (best == kind::value) { return best_value; }
+		// Maximum key under best_address: follow the last transition to a leaf.
+		std::uint64_t v = best_value;
+		for (address = best_address;;) {
+			node n = load(address);
+			if (!n.count) { return v + n.final_output; }
+			transition t = n.at(n.count - 1);
+			v += t.output;
+			address = t.target;
+		}
+	}
+
 	// The largest key <= key, with its value.
 	std::optional<std::pair<std::string, std::uint64_t>> floor(std::string_view key) const {
 		struct frame { node n; std::uint64_t out; };

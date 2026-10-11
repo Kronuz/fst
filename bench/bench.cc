@@ -176,4 +176,19 @@ int main(int argc, char** argv) {
 	row("hash map", h.bytes(), hash_build, hash_ns);
 	row("front-coded", fc.bytes(), fc_build, fc_ns);
 	std::printf("\nfst / hash map: lookup %.2fx, bytes %.2f\n", fst_ns / hash_ns, double(m.bytes()) / double(h.bytes()));
+
+	// Block-tree use: an FST over every 32nd key; floor() finds a key's block.
+	fst::builder bb;
+	for (std::size_t i = 0; i < keys.size(); i += 32) { bb.insert(keys[i], i / 32); }
+	std::string index_bytes = bb.finish();
+	fst::map index(index_bytes);
+	double floor_ns = 1e300;
+	for (int round = 0; round < 3; ++round) {
+		floor_ns = std::min(floor_ns, median_lookup_ns(queries, [&](std::string_view k) {
+			auto f = index.floor_value(k);
+			return std::optional<std::uint64_t>(f.value_or(0));
+		}));
+	}
+	std::printf("block index (1/32 of the keys, floor): %zu bytes, %.1f ns per floor (%.2fx the hash map lookup)\n",
+		index.bytes(), floor_ns, floor_ns / hash_ns);
 }

@@ -44,11 +44,14 @@ static void check(const reference& ref, std::mt19937_64& rng, const std::string&
 
 		auto ub = ref.upper_bound(probe);
 		auto got = m.floor(probe);
+		auto got_value = m.floor_value(probe);
 		if (ub == ref.begin()) {
 			CHECK(!got);
+			CHECK(!got_value);
 		} else {
 			--ub;
 			CHECK(got && got->first == ub->first && got->second == ub->second);
+			CHECK(got_value == ub->second);
 		}
 
 		std::string lo = random_key(), hi = random_key();

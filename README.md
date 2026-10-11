@@ -15,7 +15,8 @@ One header, `fst.hh`:
   key's value is the sum of the outputs on its path.
 - `fst::map` reads those bytes without copying or parsing them up front:
   - `get(key)` and `contains(key)`
-  - `floor(key)`: the largest key `<=` a key, the lookup a block-tree term dictionary
+  - `floor(key)`: the largest key `<=` a key, with that key; `floor_value(key)`: just
+    its value, in one allocation-free pass, the lookup a block-tree term dictionary
     uses to find a key's block
   - `range(lo, hi, f)`: keys in `[lo, hi)` in ascending order
   - `intersect(automaton, f)`: keys a deterministic automaton accepts, pruning every
@@ -44,18 +45,28 @@ and `can_match(state)`.
 
 ## Performance
 
-`bench/bench.cc` on `/usr/share/dict/words` (235,976 keys, 9.57 bytes each),
-Intel i9-9980HK, macOS, Apple clang `-O3`; values are key ordinals. The hash map
-is linear probing with the keys in one arena; front coding uses blocks of 16.
+`bench/bench.cc` compares the FST with an open-addressing hash map (linear probing,
+keys in one arena) and front coding in blocks of 16; values are key ordinals and
+lookups use shuffled present keys.
+
+English Wikipedia vocabulary (3,964,752 keys, 8.52 bytes each), Linux VM on an Intel
+i9-9980HK, Clang 18 `-O3`:
 
 | Structure | Bytes per key | Build (Mkeys/s) | Lookup p50 |
 |---|---:|---:|---:|
-| fst | 6.20 | 1.27 | 224 ns |
-| Hash map | 62.89 | 9.44 | 112 ns |
-| Front-coded array | 5.94 | 18.56 | 631 ns |
+| fst | 5.91 | 1.12 | 668 ns |
+| Hash map | 59.30 | 6.04 | 275 ns |
+| Front-coded array | 5.12 | 29.42 | 1,452 ns |
+| fst over every 32nd key, `floor_value` | 0.29 (1.16 MB total) | | 447 ns |
 
-The FST is a tenth of the hash map's size, with lookups at twice its latency and
-2.8× faster than binary search over front-coded blocks.
+At this size every structure is bound by memory latency: the 23 MB FST does not fit
+in the last-level cache, so a lookup takes a few cache misses at branching nodes
+against the hash map's one or two. The FST is a tenth of the hash map's size. Used as
+the index over term blocks, the FST is small enough to stay cached and `floor_value`
+runs at 1.63× the hash map's exact lookup.
+
+`/usr/share/dict/words` (235,976 keys) on macOS, Apple clang: the FST takes 6.20
+bytes per key and looks up in 224 ns against the hash map's 112 ns.
 
 ## Format
 
