@@ -9,6 +9,7 @@
 #include <iterator>
 #include <map>
 #include <random>
+#include <thread>
 
 static int failures = 0;
 #define CHECK(cond) \
@@ -168,6 +169,27 @@ int main(int argc, char** argv) {
 			} catch (const std::invalid_argument&) {
 			}
 		}
+	}
+
+	// Maximum-length keys walk in constant native stack (macOS threads have 512 KiB).
+	{
+		fst::builder b;
+		std::string a(fst::max_key_length, 'a'), z(fst::max_key_length, 'z');
+		b.insert(a, 1);
+		b.insert(z, 2);
+		std::string bytes = b.finish();
+		std::size_t seen = 0, matched = 0;
+		std::thread worker([&] {
+			fst::map m(bytes);
+			m.for_each([&](std::string_view k, std::uint64_t) { seen += k.size() == fst::max_key_length; return true; });
+			m.intersect(fst::prefix_automaton{"zz"}, [&](std::string_view, std::uint64_t v) { matched += v == 2; return true; });
+		});
+		worker.join();
+		CHECK(seen == 2);
+		CHECK(matched == 1);
+		bool threw = false;
+		try { fst::builder c; c.insert(std::string(fst::max_key_length + 1, 'x'), 0); } catch (const std::invalid_argument&) { threw = true; }
+		CHECK(threw);
 	}
 
 	// Golden fixture: the FST1 format must not drift.

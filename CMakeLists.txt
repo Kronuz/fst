@@ -1,5 +1,6 @@
 cmake_minimum_required(VERSION 3.14)
 project(fst LANGUAGES CXX)
+find_package(Threads REQUIRED)
 
 # Header-only: fst.hh is the whole implementation.
 add_library(fst INTERFACE)
@@ -11,7 +12,7 @@ add_library(fst::fst ALIAS fst)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   enable_testing()
   add_executable(fst_test test/test.cc)
-  target_link_libraries(fst_test PRIVATE fst)
+  target_link_libraries(fst_test PRIVATE fst Threads::Threads)
   target_compile_definitions(fst_test PRIVATE FST_FIXTURES="${CMAKE_CURRENT_SOURCE_DIR}/test/fixtures")
   add_test(NAME fst COMMAND fst_test)
   # libFuzzer target (Clang): cmake -DFST_FUZZ=ON -DCMAKE_CXX_COMPILER=clang++

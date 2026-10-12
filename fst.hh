@@ -354,10 +354,44 @@ public:
 
 	// Calls f(key, value) for each key in [lo, hi) in ascending order; an empty hi means no
 	// upper bound. f returns false to stop.
+	// Iterative depth-first walk in label order, so deep keys never grow the native stack.
 	template <typename F>
 	void range(std::string_view lo, std::string_view hi, F&& f) const {
-		std::string key;
-		walk(load(root_), 0, key, lo, true, hi, f);
+		struct frame { node n; std::uint64_t out; std::size_t next; bool on_lo; };
+		std::vector<frame> stack;
+		std::string key;  // key.size() == stack.size() - 1 while walking
+		// Visits a node: emits it if it is a key in range, then queues its transitions.
+		// on_lo: key is still a prefix of lo, so smaller labels are skipped.
+		auto enter = [&](const node& n, std::uint64_t out, bool on_lo) {
+			const std::size_t depth = key.size();
+			if (n.is_final && !(on_lo && depth < lo.size())) {
+				if (!hi.empty() && std::string_view(key) >= hi) { return false; }
+				if (!f(std::string_view(key), out + n.final_output)) { return false; }
+			}
+			std::size_t i = 0;
+			if (on_lo && depth < lo.size()) {
+				while (i < n.count && n.at(i).label < std::uint8_t(lo[depth])) { ++i; }
+			}
+			stack.push_back({n, out, i, on_lo});
+			return true;
+		};
+		if (!enter(load(root_), 0, true)) { return; }
+		while (!stack.empty()) {
+			frame& top = stack.back();
+			if (top.next == top.n.count) {
+				stack.pop_back();
+				if (!stack.empty()) { key.pop_back(); }
+				continue;
+			}
+			const transition t = top.n.at(top.next++);
+			const std::size_t depth = key.size();
+			const bool still_lo = top.on_lo && depth < lo.size() && t.label == std::uint8_t(lo[depth]);
+			const std::uint64_t out = top.out + t.output;
+			key.push_back(char(t.label));
+			// Everything under key is >= key; stop once key itself reaches hi.
+			if (!hi.empty() && std::string_view(key) >= hi) { return; }
+			if (!enter(load(t.target), out, still_lo)) { return; }
+		}
 	}
 
 	template <typename F>
@@ -369,8 +403,32 @@ public:
 	// automaton provides start(), accept(state, byte), is_match(state), can_match(state).
 	template <typename A, typename F>
 	void intersect(const A& automaton, F&& f) const {
-		std::string key;
-		intersect_from(load(root_), 0, automaton, automaton.start(), key, f);
+		using state_t = decltype(automaton.start());
+		struct frame { node n; std::uint64_t out; std::size_t next; state_t state; };
+		std::vector<frame> stack;
+		std::string key;  // key.size() == stack.size() - 1 while walking
+		auto enter = [&](const node& n, std::uint64_t out, state_t state) {
+			if (n.is_final && automaton.is_match(state)) {
+				if (!f(std::string_view(key), out + n.final_output)) { return false; }
+			}
+			stack.push_back({n, out, 0, std::move(state)});
+			return true;
+		};
+		if (!enter(load(root_), 0, automaton.start())) { return; }
+		while (!stack.empty()) {
+			frame& top = stack.back();
+			if (top.next == top.n.count) {
+				stack.pop_back();
+				if (!stack.empty()) { key.pop_back(); }
+				continue;
+			}
+			const transition t = top.n.at(top.next++);
+			state_t next = automaton.accept(top.state, t.label);
+			if (!automaton.can_match(next)) { continue; }
+			const std::uint64_t out = top.out + t.output;
+			key.push_back(char(t.label));
+			if (!enter(load(t.target), out, std::move(next))) { return; }
+		}
 	}
 
 private:
@@ -461,51 +519,6 @@ private:
 			n = load(t.target);
 		}
 		return std::pair{std::move(prefix), out + n.final_output};
-	}
-
-	// Depth-first in label order. on_lo: key is still a prefix of lo, so smaller labels are skipped.
-	template <typename F>
-	bool walk(const node& n, std::uint64_t out, std::string& key, std::string_view lo, bool on_lo, std::string_view hi, F& f) const {
-		const std::size_t depth = key.size();
-		if (n.is_final && !(on_lo && depth < lo.size())) {
-			if (!hi.empty() && std::string_view(key) >= hi) { return false; }
-			if (!f(std::string_view(key), out + n.final_output)) { return false; }
-		}
-		std::size_t i = 0;
-		if (on_lo && depth < lo.size()) {
-			while (i < n.count && n.at(i).label < std::uint8_t(lo[depth])) { ++i; }
-		}
-		for (; i < n.count; ++i) {
-			transition t = n.at(i);
-			key.push_back(char(t.label));
-			// Everything under key is >= key; stop once key itself reaches hi.
-			if (!hi.empty() && std::string_view(key) >= hi) {
-				key.pop_back();
-				return false;
-			}
-			bool still_lo = on_lo && depth < lo.size() && t.label == std::uint8_t(lo[depth]);
-			bool go_on = walk(load(t.target), out + t.output, key, lo, still_lo, hi, f);
-			key.pop_back();
-			if (!go_on) { return false; }
-		}
-		return true;
-	}
-
-	template <typename A, typename S, typename F>
-	bool intersect_from(const node& n, std::uint64_t out, const A& a, const S& state, std::string& key, F& f) const {
-		if (n.is_final && a.is_match(state)) {
-			if (!f(std::string_view(key), out + n.final_output)) { return false; }
-		}
-		for (std::size_t i = 0; i < n.count; ++i) {
-			transition t = n.at(i);
-			S next = a.accept(state, t.label);
-			if (!a.can_match(next)) { continue; }
-			key.push_back(char(t.label));
-			bool go_on = intersect_from(load(t.target), out + t.output, a, next, key, f);
-			key.pop_back();
-			if (!go_on) { return false; }
-		}
-		return true;
 	}
 
 	std::span<const std::uint8_t> bytes_;
