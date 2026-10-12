@@ -3,6 +3,7 @@
 #include "fst.hh"
 
 #include <cstdio>
+#include <cstdio>
 #include <cstdlib>
 #include <fstream>
 #include <iterator>
@@ -123,6 +124,74 @@ int main(int argc, char** argv) {
 		threw = false;
 		try { b.insert("b", 2); } catch (const std::invalid_argument&) { threw = true; }
 		CHECK(threw);
+	}
+
+	// Malformed bytes are rejected at open; anything accepted is safe to query.
+	{
+		reference ref;
+		for (int i = 0; i < 500; ++i) { ref["k" + std::to_string(i * 7919 % 100003)] = std::uint64_t(i); }
+		std::string good = build(ref);
+		auto rejects = [](const std::string& bytes) {
+			try { fst::map m(bytes); } catch (const std::invalid_argument&) { return true; }
+			return false;
+		};
+		CHECK(!rejects(good));
+		std::string bad = good;
+		for (int i = 0; i < 8; ++i) { bad[bad.size() - 16 + std::size_t(i)] = char(0xff); }  // root far outside the bytes
+		CHECK(rejects(bad));
+		for (std::size_t cut = 0; cut < good.size(); cut += 1 + good.size() / 300) { CHECK(rejects(good.substr(0, cut))); }
+		// A chain node whose delta is 0 (a self-loop): build a one-key FST and zero its delta.
+		{
+			fst::builder b;
+			b.insert("a", 0);
+			std::string one = b.finish();
+			std::string loop = one;
+			std::size_t root = std::size_t(fst::detail::get_le(reinterpret_cast<const std::uint8_t*>(loop.data()) + loop.size() - 16, 8));
+			loop[root + 2] = 0;  // [header][label][delta]
+			CHECK(rejects(loop));
+		}
+		std::mt19937_64 g(9);
+		for (int round = 0; round < 20000; ++round) {
+			std::string mutated = good;
+			mutated[g() % mutated.size()] = char(g());
+			try {
+				fst::map m(mutated);
+				for (int q = 0; q < 20; ++q) {
+					std::string key = "k" + std::to_string(g() % 100003);
+					(void)m.get(key);
+					(void)m.floor(key);
+					(void)m.floor_value(key);
+				}
+				std::size_t n = 0;
+				m.range("k1", "k5", [&](std::string_view, std::uint64_t) { return ++n < 1000; });
+				m.intersect(fst::prefix_automaton{"k2"}, [&](std::string_view, std::uint64_t) { return ++n < 2000; });
+			} catch (const std::invalid_argument&) {
+			}
+		}
+	}
+
+	// Golden fixture: the FST1 format must not drift.
+	{
+		fst::builder b;
+		const char* words[] = {"", "a", "ab", "abc", "abd", "b", "ba", "bab", "cab", "zzz"};
+		std::uint64_t v = 0;
+		for (const char* w : words) { b.insert(w, v); v = v * 31 + 7; }
+		std::string bytes = b.finish();
+		const char* path = FST_FIXTURES "/small.fst";
+		if (std::getenv("FST_WRITE_FIXTURES")) {
+			std::FILE* f = std::fopen(path, "wb");
+			std::fwrite(bytes.data(), 1, bytes.size(), f);
+			std::fclose(f);
+		}
+		std::string golden;
+		if (std::FILE* f = std::fopen(path, "rb")) {
+			for (int c; (c = std::fgetc(f)) != EOF;) { golden.push_back(char(c)); }
+			std::fclose(f);
+		}
+		CHECK(golden == bytes);
+		fst::map m(golden);
+		v = 0;
+		for (const char* w : words) { CHECK(m.get(w) == v); v = v * 31 + 7; }
 	}
 
 	// A real vocabulary, if one is given or available.

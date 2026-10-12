@@ -124,6 +124,13 @@ inline constexpr std::uint8_t final_bit = 1, final_output_bit = 2, chain_bit = 4
 
 }  // namespace detail
 
+// Longest key the builder accepts and a validated map can hold; bounds traversal depth.
+inline constexpr std::size_t max_key_length = 4096;
+
+// Tag for map's constructor: skip validation of bytes already known good.
+struct trusted_t { explicit trusted_t() = default; };
+inline constexpr trusted_t trusted{};
+
 struct transition {
 	std::uint8_t label;
 	std::uint64_t output;
@@ -137,13 +144,18 @@ struct transition {
 class map {
 public:
 	map() = default;
-	explicit map(std::span<const std::uint8_t> bytes) : bytes_(bytes) {
-		if (bytes.size() < 20 || std::memcmp(bytes.data(), "FST1", 4) != 0) { throw std::invalid_argument("fst: not an FST"); }
+	// Validates the bytes (one pass over every node); throws std::invalid_argument when they
+	// are not a well-formed FST, so lookups on any accepted input stay in bounds.
+	explicit map(std::span<const std::uint8_t> bytes) : map(bytes, trusted) { validate(); }
+	explicit map(std::string_view bytes) : map(as_bytes(bytes)) {}
+
+	// Skips validation, for bytes that already passed it (for example, checksummed on disk).
+	map(std::span<const std::uint8_t> bytes, trusted_t) : bytes_(bytes) {
+		if (bytes.size() < 21 || std::memcmp(bytes.data(), "FST1", 4) != 0) { throw std::invalid_argument("fst: not an FST"); }
 		root_ = detail::get_le(bytes.data() + bytes.size() - 16, 8);
 		size_ = detail::get_le(bytes.data() + bytes.size() - 8, 8);
 	}
-	explicit map(std::string_view bytes)
-		: map(std::span<const std::uint8_t>(reinterpret_cast<const std::uint8_t*>(bytes.data()), bytes.size())) {}
+	map(std::string_view bytes, trusted_t) : map(as_bytes(bytes), trusted) {}
 
 	std::uint64_t size() const noexcept { return size_; }
 	std::size_t bytes() const noexcept { return bytes_.size(); }
@@ -362,6 +374,85 @@ public:
 	}
 
 private:
+	static std::span<const std::uint8_t> as_bytes(std::string_view s) noexcept {
+		return {reinterpret_cast<const std::uint8_t*>(s.data()), s.size()};
+	}
+
+	[[noreturn]] static void malformed() { throw std::invalid_argument("fst: malformed bytes"); }
+
+	// Parses every node in address order. Children precede parents, so each target must be
+	// an already-seen node start below its parent; that also rules out cycles. Tracks each
+	// node's longest key and key count to check depth and the trailer.
+	void validate() const {
+		const std::uint8_t* base = bytes_.data();
+		const std::uint64_t end = bytes_.size() - 16;  // nodes end where the trailer starts
+		if (root_ < 4 || root_ >= end) { malformed(); }
+		std::vector<std::uint64_t> starts;    // node addresses, increasing
+		std::vector<std::uint32_t> depth;     // longest key below each node
+		std::vector<std::uint64_t> keys;      // keys below each node, saturating
+		auto varint = [&](std::uint64_t& at) {
+			std::uint64_t v = 0;
+			for (unsigned shift = 0;; shift += 7) {
+				if (at >= end || shift > 63) { malformed(); }
+				std::uint8_t b = base[at++];
+				v |= std::uint64_t(b & 0x7f) << shift;
+				if (!(b & 0x80)) { return v; }
+			}
+		};
+		auto target_index = [&](std::uint64_t address, std::uint64_t delta) {
+			if (delta == 0 || delta > address - 4) { malformed(); }
+			std::uint64_t target = address - delta;
+			auto it = std::lower_bound(starts.begin(), starts.end(), target);
+			if (it == starts.end() || *it != target) { malformed(); }
+			return std::size_t(it - starts.begin());
+		};
+		auto add = [](std::uint64_t a, std::uint64_t b) { return a > ~0ull - b ? ~0ull : a + b; };
+		std::uint64_t at = 4;
+		while (at < end) {
+			const std::uint64_t address = at;
+			const std::uint8_t h = base[at++];
+			if (h & detail::final_output_bit && !(h & detail::final_bit)) { malformed(); }
+			if (h & detail::final_output_bit) { varint(at); }
+			std::uint32_t d = 0;
+			std::uint64_t k = (h & detail::final_bit) ? 1 : 0;
+			if (h & detail::chain_bit) {
+				if (h & 0xf0) { malformed(); }
+				if (at >= end) { malformed(); }
+				++at;  // label
+				if (h & detail::chain_output_bit) { varint(at); }
+				std::size_t t = target_index(address, varint(at));
+				d = depth[t] + 1;
+				k = add(k, keys[t]);
+			} else {
+				std::uint64_t count = h >> 3;
+				if (count == 31) { count += varint(at); }
+				if (count) {
+					if (count > 256 || end - at < count + 1) { malformed(); }
+					const std::uint8_t* labels = base + at;
+					for (std::uint64_t i = 1; i < count; ++i) {
+						if (labels[i] <= labels[i - 1]) { malformed(); }
+					}
+					at += count;
+					const unsigned ob = base[at] & 0x0f, tb = base[at] >> 4;
+					++at;
+					if (ob > 8 || tb == 0 || tb > 8 || end - at < count * (ob + tb)) { malformed(); }
+					const std::uint8_t* deltas = base + at + count * ob;
+					for (std::uint64_t i = 0; i < count; ++i) {
+						std::size_t t = target_index(address, detail::get_le(deltas + i * tb, tb));
+						d = std::max(d, depth[t] + 1);
+						k = add(k, keys[t]);
+					}
+					at += count * (ob + tb);
+				}
+			}
+			if (d > max_key_length) { malformed(); }
+			starts.push_back(address);
+			depth.push_back(d);
+			keys.push_back(k);
+		}
+		if (at != end || starts.empty() || starts.back() != root_ || keys.back() != size_) { malformed(); }
+	}
+
 	std::optional<std::pair<std::string, std::uint64_t>> max_from(node n, std::string prefix, std::uint64_t out) const {
 		while (n.count) {
 			transition t = n.at(n.count - 1);
@@ -432,6 +523,7 @@ public:
 
 	void insert(std::string_view key, std::uint64_t value) {
 		if (count_ && key <= std::string_view(last_)) { throw std::invalid_argument("fst: keys must be strictly increasing"); }
+		if (key.size() > max_key_length) { throw std::invalid_argument("fst: key longer than max_key_length"); }
 		std::size_t prefix = 0;
 		while (prefix < key.size() && prefix < last_.size() && key[prefix] == last_[prefix]) { ++prefix; }
 		freeze_after(prefix);
