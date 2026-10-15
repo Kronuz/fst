@@ -33,6 +33,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <limits>
 #include <optional>
 #include <span>
 #include <stdexcept>
@@ -124,8 +125,9 @@ inline constexpr std::uint8_t final_bit = 1, final_output_bit = 2, chain_bit = 4
 
 }  // namespace detail
 
-// Longest key the builder accepts and a validated map can hold; bounds traversal depth.
-inline constexpr std::size_t max_key_length = 4096;
+// Longest key the builder accepts and a validated map can hold: validation records each
+// node's depth as 32 bits. Walks are iterative, so depth costs heap, not native stack.
+inline constexpr std::size_t max_key_length = std::numeric_limits<std::uint32_t>::max();
 
 // Tag for map's constructor: skip validation of bytes already known good.
 struct trusted_t { explicit trusted_t() = default; };
@@ -471,7 +473,7 @@ private:
 			const std::uint8_t h = base[at++];
 			if (h & detail::final_output_bit && !(h & detail::final_bit)) { malformed(); }
 			if (h & detail::final_output_bit) { varint(at); }
-			std::uint32_t d = 0;
+			std::uint64_t d = 0;
 			std::uint64_t k = (h & detail::final_bit) ? 1 : 0;
 			if (h & detail::chain_bit) {
 				if (h & 0xf0) { malformed(); }
@@ -479,7 +481,7 @@ private:
 				++at;  // label
 				if (h & detail::chain_output_bit) { varint(at); }
 				std::size_t t = target_index(address, varint(at));
-				d = depth[t] + 1;
+				d = depth[t] + std::uint64_t(1);
 				k = add(k, keys[t]);
 			} else {
 				std::uint64_t count = h >> 3;
@@ -497,7 +499,7 @@ private:
 					const std::uint8_t* deltas = base + at + count * ob;
 					for (std::uint64_t i = 0; i < count; ++i) {
 						std::size_t t = target_index(address, detail::get_le(deltas + i * tb, tb));
-						d = std::max(d, depth[t] + 1);
+						d = std::max<std::uint64_t>(d, depth[t] + std::uint64_t(1));
 						k = add(k, keys[t]);
 					}
 					at += count * (ob + tb);
@@ -505,7 +507,7 @@ private:
 			}
 			if (d > max_key_length) { malformed(); }
 			starts.push_back(address);
-			depth.push_back(d);
+			depth.push_back(std::uint32_t(d));
 			keys.push_back(k);
 		}
 		if (at != end || starts.empty() || starts.back() != root_ || keys.back() != size_) { malformed(); }
