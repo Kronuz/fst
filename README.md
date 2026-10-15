@@ -1,5 +1,7 @@
 # fst
 
+[![CI](https://github.com/Kronuz/fst/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronuz/fst/actions/workflows/ci.yml)
+
 Minimal acyclic finite state transducers for C++20: an ordered map from byte strings
 to `uint64` values that shares common prefixes and suffixes, so a vocabulary takes a
 few bytes per key. Header-only, no dependencies. Built from sorted keys, read in
