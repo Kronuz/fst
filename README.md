@@ -1,13 +1,18 @@
 # fst
 
 [![CI](https://github.com/Kronuz/fst/actions/workflows/ci.yml/badge.svg)](https://github.com/Kronuz/fst/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+![C++20](https://img.shields.io/badge/C%2B%2B-20-blue.svg)
+![Header-only](https://img.shields.io/badge/header--only-yes-green.svg)
 
 Minimal acyclic finite state transducers for C++20: an ordered map from byte strings
 to `uint64` values that shares common prefixes and suffixes, so a vocabulary takes a
 few bytes per key. Header-only, no dependencies. Built from sorted keys, read in
 place from bytes (a string, a memory-mapped file).
 
-## What it is
+![fst: sorted keys share prefixes and suffixes in a minimal transducer](docs/fst.svg)
+
+## ✨ Highlights
 
 One header, `fst.hh`:
 
@@ -24,7 +29,23 @@ One header, `fst.hh`:
   - `intersect(automaton, f)`: keys a deterministic automaton accepts, pruning every
     branch the automaton rejects (prefix, wildcard, and Levenshtein matching)
 
-## Usage
+## 📦 Installation
+
+Requires a C++20 compiler; CMake 3.14 or newer for the CMake route. CI builds it on
+Linux (x86_64, arm64), macOS (arm64, x86_64), and FreeBSD, plus ASan, UBSan, and TSan
+builds.
+
+```cmake
+include(FetchContent)
+FetchContent_Declare(fst
+  GIT_REPOSITORY https://github.com/Kronuz/fst.git
+  GIT_TAG        main)
+FetchContent_MakeAvailable(fst)
+
+target_link_libraries(my_app PRIVATE fst::fst)
+```
+
+## 🚀 Quick start
 
 ```cpp
 #include "fst.hh"
@@ -45,7 +66,7 @@ m.intersect(fst::prefix_automaton{"ca"}, [](std::string_view k, std::uint64_t v)
 An automaton is any type with `start()`, `accept(state, byte)`, `is_match(state)`,
 and `can_match(state)`.
 
-## Performance
+## ⚡ Performance
 
 `bench/bench.cc` compares the FST with an open-addressing hash map (linear probing,
 keys in one arena) and front coding in blocks of 16; values are key ordinals and
@@ -70,7 +91,7 @@ runs at 1.63× the hash map's exact lookup.
 `/usr/share/dict/words` (235,976 keys) on macOS, Apple clang: the FST takes 6.20
 bytes per key and looks up in 224 ns against the hash map's 112 ns.
 
-## Format
+## 🧩 Format
 
 Nodes are written children first; transitions store the distance down to their
 target. A node with one transition (a "chain", most of a vocabulary's suffixes) is a
@@ -80,7 +101,7 @@ by fixed-width output and target columns. A 16-byte trailer holds the root addre
 and the key count, and also lets readers load whole words past any field.
 See [ARCHITECTURE.md](ARCHITECTURE.md).
 
-## Build and test
+## 🛠️ Building and testing
 
 ```sh
 cmake -S . -B build && cmake --build build && ctest --test-dir build
@@ -91,12 +112,27 @@ The tests compare `get`, `floor`, `range`, and prefix intersection with `std::ma
 on random key sets over 2-, 8-, and 256-letter alphabets (including the empty key
 and zero outputs) and on the system dictionary.
 
-## Limits
+## 🎯 When to use it
+
+- ✅ Term dictionaries and vocabularies: large, static, sorted key sets with lookups, prefix, range, and fuzzy queries.
+- ❌ Keys that change: there is no insert or delete; rebuild instead.
+
+### Limits
 
 - Keys must arrive sorted; there is no update or delete. Rebuild to change it.
 - Values are unsigned and additive.
 - Little-endian hosts only.
 
-## License
+## 📚 Documentation
 
-MIT. See [LICENSE](LICENSE).
+- [ARCHITECTURE.md](ARCHITECTURE.md): the design and the format.
+- [AGENTS.md](AGENTS.md): repository map and invariants.
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome. Read [AGENTS.md](AGENTS.md) first. CI must
+pass on every platform.
+
+## 📄 License
+
+MIT, Copyright (c) 2026 Germán Méndez Bravo. See [LICENSE](LICENSE).

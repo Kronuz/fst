@@ -6,6 +6,7 @@
 fst.hh           Format, map (reader), builder, prefix_automaton.
 test/test.cc     get/floor/range/intersect against std::map; random alphabets and a dictionary.
 bench/bench.cc   FST vs open-addressing hash map vs front-coded array: bytes, build, lookup.
+docs/fst.d2     README diagram; render: d2 --layout elk --sketch --theme 302 docs/fst.d2 docs/fst.svg
 ```
 
 ## Invariants

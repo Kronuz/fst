@@ -1,0 +1,17 @@
+# fst: shared prefixes and suffixes; a key's value is the sum of outputs on its path.
+# Render: d2 --layout elk --sketch --theme 302 docs/fst.d2 docs/fst.svg
+direction: right
+s0: start {shape: circle}
+s1: "" {shape: circle}
+s2: "" {shape: circle}
+s3: "" {shape: circle}
+end: final {shape: circle; style.double-border: true}
+s0 -> s1: "m / 0"
+s0 -> s2: "s / 2"
+s1 -> s3: "o / 0"
+s2 -> s3: "t / 0"
+s3 -> end: "p / 1"
+note: keys {
+  label: "\"mop\" → 1\n\"stop\" → 3 (via \"s / 2\")"
+  shape: page
+}
