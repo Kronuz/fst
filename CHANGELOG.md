@@ -4,6 +4,29 @@ Notable changes to fst, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are dated because the
 library has no releases.
 
+## 2026-10-31
+
+### Documentation
+
+- The README performance table is measured on an Apple M4 Pro with
+  `/usr/share/dict/words` at `c57e01f`. It replaces a table measured on 2026-10-22 at
+  `12657aa`, before the builder and `range` speedups below, on a Linux VM (Intel
+  i9-9980HK, Clang 18 `-O3`) with an English Wikipedia vocabulary (3,964,752 keys,
+  8.52 bytes each):
+
+  | Structure | Bytes per key | Build (Mkeys/s) | Lookup p50 |
+  |---|---:|---:|---:|
+  | fst | 5.91 | 1.12 | 668 ns |
+  | Hash map | 59.30 | 6.04 | 275 ns |
+  | Front-coded array | 5.12 | 29.42 | 1,452 ns |
+  | fst over every 32nd key, `floor_value` | 0.29 (1.16 MB total) | | 447 ns |
+
+  At that size the 23 MB FST did not fit in the last-level cache, and `floor_value`
+  ran at 1.63x the hash map's exact lookup. On `/usr/share/dict/words` (macOS, Apple
+  clang) the FST took 6.20 bytes per key and looked up in 224 ns against the
+  hash map's 112 ns. The Wikipedia key file is not available on the M4 host, so the
+  large-vocabulary row is not re-measured.
+
 ## 2026-10-30
 
 ### Changed

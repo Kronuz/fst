@@ -74,25 +74,26 @@ and `can_match(state)`.
 keys in one arena) and front coding in blocks of 16; values are key ordinals and
 lookups use shuffled present keys.
 
-English Wikipedia vocabulary (3,964,752 keys, 8.52 bytes each), Linux VM on an Intel
-i9-9980HK, Clang 18 `-O3`, `build/fst_bench KEYS_FILE` (measured 2026-10-22 at
-`12657aa`):
+`/usr/share/dict/words` (235,976 keys, 9.57 bytes each), Apple M4 Pro, Apple clang 17
+with `-O3 -DNDEBUG`, measured under `quiet strict` at `c57e01f` (two runs agree within
+1% on lookups):
 
 | Structure | Bytes per key | Build (Mkeys/s) | Lookup p50 |
 |---|---:|---:|---:|
-| fst | 5.91 | 1.12 | 668 ns |
-| Hash map | 59.30 | 6.04 | 275 ns |
-| Front-coded array | 5.12 | 29.42 | 1,452 ns |
-| fst over every 32nd key, `floor_value` | 0.29 (1.16 MB total) | | 447 ns |
+| fst | 6.20 | 8.6 | 151 ns |
+| Hash map | 62.89 | 33.7 | 24 ns |
+| Front-coded array | 5.94 | 40 | 262 ns |
+| fst over every 32nd key, `floor_value` | 0.36 (84 KB total) | | 111 ns |
 
-At this size every structure is bound by memory latency: the 23 MB FST does not fit
-in the last-level cache, so a lookup takes a few cache misses at branching nodes
-against the hash map's one or two. The FST is a tenth of the hash map's size. Used as
-the index over term blocks, the FST is small enough to stay cached and `floor_value`
-runs at 1.63× the hash map's exact lookup.
+```sh
+cmake -S . -B build -DCMAKE_BUILD_TYPE=Release && cmake --build build --target fst_bench
+build/fst_bench /usr/share/dict/words
+```
 
-`/usr/share/dict/words` (235,976 keys) on macOS, Apple clang: the FST takes 6.20
-bytes per key and looks up in 224 ns against the hash map's 112 ns.
+The FST is a tenth of the hash map's size and looks up 1.7× faster than the
+front-coded array. The hash map builds and looks up faster and holds no order, so it
+cannot answer prefix, range, or fuzzy queries. As the index over term blocks (an FST
+over every 32nd key), `floor_value` finds a key's block in 111 ns from an 84 KB index.
 
 ## 🧩 Format
 
