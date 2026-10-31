@@ -75,7 +75,8 @@ keys in one arena) and front coding in blocks of 16; values are key ordinals and
 lookups use shuffled present keys.
 
 English Wikipedia vocabulary (3,964,752 keys, 8.52 bytes each), Linux VM on an Intel
-i9-9980HK, Clang 18 `-O3`:
+i9-9980HK, Clang 18 `-O3`, `build/fst_bench KEYS_FILE` (measured 2026-10-22 at
+`12657aa`):
 
 | Structure | Bytes per key | Build (Mkeys/s) | Lookup p50 |
 |---|---:|---:|---:|
@@ -108,19 +109,14 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 ```sh
 cmake -S . -B build && cmake --build build && ctest --test-dir build
 build/fst_bench KEYS_FILE
-build/fst_cmp_bench KEYS_FILE   # build and for_each against test/fst_old.hh, the frozen original
+build/fst_cmp_bench KEYS_FILE   # build and for_each against the reference test/fst_old.hh
 ```
-
-How it is fast: the builder keeps a flat open-addressing table of (hash, address) for the
-nodes it has written and verifies a hit against the bytes already in the output, so it stores
-no per-node signature and does no per-node allocation. `range` keeps a small frame per level
-(pointers and a cursor) and decodes each transition only when it is taken. Both leave the
-bytes and the results unchanged; `test/diff.cc` checks that against the frozen original. On
-236k dictionary words: build 220 -> 93 ns/key, `for_each` 55 -> 37 ns/key (arm64, A/A 1.0).
 
 The tests compare `get`, `floor`, `range`, and prefix intersection with `std::map`
 on random key sets over 2-, 8-, and 256-letter alphabets (including the empty key
-and zero outputs) and on the system dictionary.
+and zero outputs) and on the system dictionary. `test/diff.cc` checks that the builder
+emits the same bytes as the reference implementation in `test/fst_old.hh`, and that
+`range` and `for_each` visit the same keys and values.
 
 ## 🎯 When to use it
 
@@ -136,6 +132,7 @@ and zero outputs) and on the system dictionary.
 ## 📚 Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): the design and the format.
+- [CHANGELOG.md](CHANGELOG.md): changes by date.
 - [AGENTS.md](AGENTS.md): repository map and invariants.
 
 ## 🤝 Contributing

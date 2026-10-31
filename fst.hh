@@ -358,8 +358,8 @@ public:
 	// Iterative depth-first walk in label order, so deep keys never grow the native stack.
 	template <typename F>
 	void range(std::string_view lo, std::string_view hi, F&& f) const {
-		// A frame holds just enough of a node to step through its transitions: no node struct is
-		// built or copied, and the next transition is decoded only when it is taken.
+		// A frame holds just enough of a node to step through its transitions; the next
+		// transition is decoded only when it is taken.
 		struct frame {
 			const std::uint8_t* labels;  // null for chain nodes
 			const std::uint8_t* outputs;

@@ -27,7 +27,7 @@
 // final node's output. The builder minimizes incrementally (Daciuk et al., 2000),
 // sharing equal suffixes, and pushes outputs toward the root.
 
-// Frozen copy of the pre-optimization fst.hh (builder and range): the oracle for test/diff.cc.
+// Reference fst.hh (signature-string registry, full node decode in range): the oracle for test/diff.cc.
 #pragma once
 
 #include <algorithm>

@@ -1,5 +1,5 @@
-// Differential test against test/fst_old.hh, a frozen copy of the original implementation:
-// the builder must emit identical bytes and range/for_each must visit identical (key, value)
+// Differential test against the reference implementation in test/fst_old.hh: the builder
+// must emit identical bytes and range/for_each must visit identical (key, value)
 // sequences, over many random key sets and edge cases.
 #include "fst.hh"
 #include "fst_old.hh"

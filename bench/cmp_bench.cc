@@ -1,5 +1,5 @@
-// Builder and full-iteration timings, new fst.hh against the frozen test/fst_old.hh, with an A/A
-// row (old against old) for the noise floor. Usage: fst_cmp_bench [words-file]
+// Builder and full-iteration timings of fst.hh against the reference test/fst_old.hh, with an
+// A/A row (reference against itself) for the noise floor. Usage: fst_cmp_bench [words-file]
 #include "fst.hh"
 #include "fst_old.hh"
 

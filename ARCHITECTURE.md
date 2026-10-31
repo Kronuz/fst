@@ -6,11 +6,13 @@ The builder keeps the path of the previous key as unfrozen nodes, one per depth.
 Inserting a key:
 
 1. Finds the common prefix with the previous key.
-2. Freezes every node below that prefix, deepest first. Freezing looks the node up in
-   a registry keyed by its signature (final flag, final output, and each transition's
-   label, output, and target address); an equal node already written is reused,
-   otherwise the node is written and registered. This shares equal suffixes and keeps
-   the FST minimal.
+2. Freezes every node below that prefix, deepest first. Freezing hashes the node
+   (final flag, final output, and each transition's label, output, and target address)
+   and looks the hash up in a flat open-addressing table of (hash, address). A hit is
+   verified against the node's bytes already in the output; an equal node is reused,
+   otherwise the node is written and its address added. This shares equal suffixes and
+   keeps the FST minimal. The table stores no per-node signature, and pending nodes are
+   cleared in place, so freezing does no per-node allocation.
 3. Pushes outputs down the shared prefix: each transition keeps the minimum of its
    output and the remaining value, and the excess moves to the child's transitions and
    final output.
@@ -49,3 +51,7 @@ the prefix itself is a key. `range` and `intersect` are depth-first walks in lab
 order: `range` skips labels below the lower bound while on its path and stops at the
 first key at or past the upper bound; `intersect` advances the automaton with each
 label and prunes branches where `can_match` is false.
+
+`range` keeps one small frame per level (node pointers and a transition cursor),
+decodes a transition only when it takes it, and writes the key into a preallocated
+buffer.
