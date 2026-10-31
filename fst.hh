@@ -39,7 +39,6 @@
 #include <stdexcept>
 #include <string>
 #include <string_view>
-#include <unordered_map>
 #include <utility>
 #include <vector>
 
@@ -566,7 +565,7 @@ public:
 		for (std::size_t d = prefix; d < key.size(); ++d) {
 			stack_[d].arcs.push_back({std::uint8_t(key[d]), d == prefix ? value : 0, 0});
 			stack_.resize(std::max(stack_.size(), d + 2));
-			stack_[d + 1] = pending{};
+			stack_[d + 1].clear();
 		}
 		stack_[key.size()].is_final = true;
 		last_.assign(key);
@@ -588,6 +587,7 @@ private:
 		std::vector<arc> arcs;
 		bool is_final = false;
 		std::uint64_t final_output = 0;
+		void clear() noexcept { arcs.clear(); is_final = false; final_output = 0; }
 	};
 
 	// Freezes nodes deeper than depth along the previous key, bottom up.
@@ -595,27 +595,84 @@ private:
 		for (std::size_t d = last_.size(); d > depth; --d) {
 			std::uint64_t address = write(stack_[d]);
 			stack_[d - 1].arcs.back().target = address;
-			stack_[d] = pending{};
+			stack_[d].clear();
 		}
 	}
 
-	struct signature_hash {
-		using is_transparent = void;
-		std::size_t operator()(std::string_view s) const noexcept { return std::hash<std::string_view>{}(s); }
-	};
+	static std::uint64_t mix(std::uint64_t h, std::uint64_t v) noexcept {
+		h = (h ^ v) * 0x9e3779b97f4a7c15ull;
+		return h ^ (h >> 32);
+	}
+
+	static std::uint64_t hash_of(const pending& n) noexcept {
+		std::uint64_t h = mix(n.is_final ? 0x51ull : 0x3full, n.final_output);
+		for (const auto& a : n.arcs) { h = mix(mix(mix(h, a.label), a.output), a.target); }
+		return h;
+	}
+
+	// True when the node written at address has exactly the content of n.
+	bool same_node(std::uint64_t address, const pending& n) const noexcept {
+		const std::uint8_t* base = reinterpret_cast<const std::uint8_t*>(out_.data());
+		const std::uint8_t* p = base + address;
+		const std::uint8_t h = *p++;
+		if (bool(h & detail::final_bit) != n.is_final) { return false; }
+		if (n.final_output != ((h & detail::final_output_bit) ? detail::get_varint(p) : 0)) { return false; }
+		if (h & detail::chain_bit) {
+			if (n.arcs.size() != 1) { return false; }
+			const arc& a = n.arcs[0];
+			if (*p++ != a.label) { return false; }
+			if (a.output != ((h & detail::chain_output_bit) ? detail::get_varint(p) : 0)) { return false; }
+			return address - detail::get_varint(p) == a.target;
+		}
+		std::size_t count = h >> 3;
+		if (count == 31) { count += std::size_t(detail::get_varint(p)); }
+		if (count != n.arcs.size()) { return false; }
+		if (!count) { return true; }
+		const std::uint8_t* labels = p;
+		p += count;
+		const unsigned ob = *p & 0x0f, tb = *p >> 4;
+		++p;
+		for (std::size_t i = 0; i < count; ++i) {
+			const arc& a = n.arcs[i];
+			if (labels[i] != a.label || detail::get_le(p + i * ob, ob) != a.output ||
+			    address - detail::get_le(p + count * ob + i * tb, tb) != a.target) { return false; }
+		}
+		return true;
+	}
+
+	// Flat open-addressing registry of (hash, address) for every node written; a hit is
+	// verified against the bytes already in out_, so no signatures are stored. Address 0 is
+	// never a node (the magic is there), so it marks an empty slot.
+	struct slot { std::uint64_t hash; std::uint64_t address; };
+
+	void grow() {
+		std::vector<slot> old(table_.empty() ? 1024 : table_.size() * 2);
+		old.swap(table_);
+		const std::size_t mask = table_.size() - 1;
+		for (const slot& s : old) {
+			if (!s.address) { continue; }
+			std::size_t i = s.hash & mask;
+			while (table_[i].address) { i = (i + 1) & mask; }
+			table_[i] = s;
+		}
+	}
 
 	// Returns the address of an equal node already written, or writes this one.
 	std::uint64_t write(const pending& n) {
-		std::string& sig = signature_;
-		sig.clear();
-		sig.push_back(char(n.is_final));
-		detail::put_varint(sig, n.final_output);
-		for (const auto& a : n.arcs) {
-			sig.push_back(char(a.label));
-			detail::put_varint(sig, a.output);
-			detail::put_varint(sig, a.target);
+		const std::uint64_t hash = hash_of(n);
+		std::size_t slot_index = 0;
+		if (!table_.empty()) {
+			const std::size_t mask = table_.size() - 1;
+			for (slot_index = hash & mask; table_[slot_index].address; slot_index = (slot_index + 1) & mask) {
+				if (table_[slot_index].hash == hash && same_node(table_[slot_index].address, n)) { return table_[slot_index].address; }
+			}
 		}
-		if (auto it = registry_.find(std::string_view(sig)); it != registry_.end()) { return it->second; }
+		if ((used_ + 1) * 2 > table_.size()) {
+			grow();
+			const std::size_t mask = table_.size() - 1;
+			slot_index = hash & mask;
+			while (table_[slot_index].address) { slot_index = (slot_index + 1) & mask; }
+		}
 
 		const std::uint64_t address = out_.size();
 		std::uint8_t h = (n.is_final ? detail::final_bit : 0) | (n.final_output ? detail::final_output_bit : 0);
@@ -644,7 +701,8 @@ private:
 				for (const auto& a : n.arcs) { detail::put_le(out_, address - a.target, tb); }
 			}
 		}
-		registry_.emplace(sig, address);
+		table_[slot_index] = {hash, address};
+		++used_;
 		return address;
 	}
 
@@ -652,8 +710,8 @@ private:
 	std::vector<pending> stack_;  // stack_[d]: the unfrozen node at depth d of the last key
 	std::string last_;
 	std::uint64_t count_ = 0;
-	std::unordered_map<std::string, std::uint64_t, signature_hash, std::equal_to<>> registry_;
-	std::string signature_;  // reused buffer for registry lookups
+	std::vector<slot> table_;
+	std::size_t used_ = 0;
 };
 
 // ---------------------------------------------------------------------------------------------
