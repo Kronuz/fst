@@ -1,0 +1,1 @@
+/usr/local/bin/c++ -fsanitize=undefined -fno-sanitize-recover=all -arch arm64 -Wl,-search_paths_first -Wl,-headerpad_max_install_names CMakeFiles/fst_test.dir/test/test.cc.o -o fst_test

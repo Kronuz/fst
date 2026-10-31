@@ -358,40 +358,98 @@ public:
 	// Iterative depth-first walk in label order, so deep keys never grow the native stack.
 	template <typename F>
 	void range(std::string_view lo, std::string_view hi, F&& f) const {
-		struct frame { node n; std::uint64_t out; std::size_t next; bool on_lo; };
+		// A frame holds just enough of a node to step through its transitions: no node struct is
+		// built or copied, and the next transition is decoded only when it is taken.
+		struct frame {
+			const std::uint8_t* labels;  // null for chain nodes
+			const std::uint8_t* outputs;
+			const std::uint8_t* deltas;
+			std::uint64_t address, out, only_output, only_target;
+			std::size_t count, next;
+			unsigned ob, tb;
+			std::uint8_t only_label;
+			bool on_lo;
+		};
 		std::vector<frame> stack;
-		std::string key;  // key.size() == stack.size() - 1 while walking
-		// Visits a node: emits it if it is a key in range, then queues its transitions.
-		// on_lo: key is still a prefix of lo, so smaller labels are skipped.
-		auto enter = [&](const node& n, std::uint64_t out, bool on_lo) {
-			const std::size_t depth = key.size();
-			if (n.is_final && !(on_lo && depth < lo.size())) {
-				if (!hi.empty() && std::string_view(key) >= hi) { return false; }
-				if (!f(std::string_view(key), out + n.final_output)) { return false; }
+		stack.reserve(64);
+		std::string key(64, '\0');  // key[0, stack.size() - 1) is the path to the top frame
+		const std::uint8_t* base = bytes_.data();
+		// Visits a node: emits it if it is a key in range, then pushes a frame for its transitions.
+		// on_lo: the path is still a prefix of lo, so smaller labels are skipped.
+		auto enter = [&](std::uint64_t address, std::uint64_t out, bool on_lo) {
+			const std::size_t depth = stack.size();  // the path length of this node
+			const std::uint8_t* p = base + address;
+			const std::uint8_t h = *p++;
+			const std::uint64_t final_out = (h & detail::final_output_bit) ? detail::get_varint(p) : 0;
+			if ((h & detail::final_bit) && !(on_lo && depth < lo.size())) {
+				const std::string_view path(key.data(), depth);
+				if (!hi.empty() && path >= hi) { return false; }
+				if (!f(path, out + final_out)) { return false; }
 			}
-			std::size_t i = 0;
+			frame fr;
+			fr.address = address;
+			fr.out = out;
+			fr.next = 0;
+			fr.on_lo = on_lo;
+			if (h & detail::chain_bit) {
+				fr.labels = nullptr;
+				fr.count = 1;
+				fr.only_label = *p++;
+				fr.only_output = (h & detail::chain_output_bit) ? detail::get_varint(p) : 0;
+				fr.only_target = address - detail::get_varint(p);
+			} else {
+				std::size_t count = h >> 3;
+				if (count == 31) { count += std::size_t(detail::get_varint(p)); }
+				fr.count = count;
+				fr.labels = p;
+				if (count) {
+					p += count;
+					fr.ob = *p & 0x0f;
+					fr.tb = *p >> 4;
+					++p;
+					fr.outputs = p;
+					fr.deltas = p + count * fr.ob;
+				}
+			}
 			if (on_lo && depth < lo.size()) {
-				while (i < n.count && n.at(i).label < std::uint8_t(lo[depth])) { ++i; }
+				const std::uint8_t want = std::uint8_t(lo[depth]);
+				if (!fr.labels) {
+					if (fr.count && fr.only_label < want) { fr.next = 1; }
+				} else {
+					while (fr.next < fr.count && fr.labels[fr.next] < want) { ++fr.next; }
+				}
 			}
-			stack.push_back({n, out, i, on_lo});
+			stack.push_back(fr);
 			return true;
 		};
-		if (!enter(load(root_), 0, true)) { return; }
+		if (!enter(root_, 0, true)) { return; }
 		while (!stack.empty()) {
 			frame& top = stack.back();
-			if (top.next == top.n.count) {
+			if (top.next == top.count) {
 				stack.pop_back();
-				if (!stack.empty()) { key.pop_back(); }
 				continue;
 			}
-			const transition t = top.n.at(top.next++);
-			const std::size_t depth = key.size();
-			const bool still_lo = top.on_lo && depth < lo.size() && t.label == std::uint8_t(lo[depth]);
-			const std::uint64_t out = top.out + t.output;
-			key.push_back(char(t.label));
-			// Everything under key is >= key; stop once key itself reaches hi.
-			if (!hi.empty() && std::string_view(key) >= hi) { return; }
-			if (!enter(load(t.target), out, still_lo)) { return; }
+			std::uint8_t label;
+			std::uint64_t t_out, target;
+			if (!top.labels) {
+				label = top.only_label;
+				t_out = top.only_output;
+				target = top.only_target;
+			} else {
+				const std::size_t i = top.next;
+				label = top.labels[i];
+				t_out = top.ob ? detail::get_le(top.outputs + i * top.ob, top.ob) : 0;
+				target = top.address - detail::get_le(top.deltas + i * top.tb, top.tb);
+			}
+			++top.next;
+			const std::size_t depth = stack.size() - 1;
+			const bool still_lo = top.on_lo && depth < lo.size() && label == std::uint8_t(lo[depth]);
+			const std::uint64_t out = top.out + t_out;
+			if (key.size() <= depth) { key.resize(key.size() * 2); }
+			key[depth] = char(label);
+			// Everything under the path is >= it; stop once the path itself reaches hi.
+			if (!hi.empty() && std::string_view(key.data(), depth + 1) >= hi) { return; }
+			if (!enter(target, out, still_lo)) { return; }
 		}
 	}
 

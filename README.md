@@ -108,7 +108,15 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 ```sh
 cmake -S . -B build && cmake --build build && ctest --test-dir build
 build/fst_bench KEYS_FILE
+build/fst_cmp_bench KEYS_FILE   # build and for_each against test/fst_old.hh, the frozen original
 ```
+
+How it is fast: the builder keeps a flat open-addressing table of (hash, address) for the
+nodes it has written and verifies a hit against the bytes already in the output, so it stores
+no per-node signature and does no per-node allocation. `range` keeps a small frame per level
+(pointers and a cursor) and decodes each transition only when it is taken. Both leave the
+bytes and the results unchanged; `test/diff.cc` checks that against the frozen original. On
+236k dictionary words: build 220 -> 93 ns/key, `for_each` 55 -> 37 ns/key (arm64, A/A 1.0).
 
 The tests compare `get`, `floor`, `range`, and prefix intersection with `std::map`
 on random key sets over 2-, 8-, and 256-letter alphabets (including the empty key
