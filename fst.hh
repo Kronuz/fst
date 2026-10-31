@@ -668,6 +668,14 @@ private:
 		return h;
 	}
 
+	// Exact n-byte little-endian read: out_ has no trailer yet, so the reader's 8-byte
+	// over-read would run past the end of the buffer here.
+	static std::uint64_t exact_le(const std::uint8_t* p, unsigned n) noexcept {
+		std::uint64_t v = 0;
+		for (unsigned i = 0; i < n; ++i) { v |= std::uint64_t(p[i]) << (8 * i); }
+		return v;
+	}
+
 	// True when the node written at address has exactly the content of n.
 	bool same_node(std::uint64_t address, const pending& n) const noexcept {
 		const std::uint8_t* base = reinterpret_cast<const std::uint8_t*>(out_.data());
@@ -692,8 +700,8 @@ private:
 		++p;
 		for (std::size_t i = 0; i < count; ++i) {
 			const arc& a = n.arcs[i];
-			if (labels[i] != a.label || detail::get_le(p + i * ob, ob) != a.output ||
-			    address - detail::get_le(p + count * ob + i * tb, tb) != a.target) { return false; }
+			if (labels[i] != a.label || exact_le(p + i * ob, ob) != a.output ||
+			    address - exact_le(p + count * ob + i * tb, tb) != a.target) { return false; }
 		}
 		return true;
 	}
