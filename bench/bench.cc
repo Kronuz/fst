@@ -41,8 +41,17 @@ static std::size_t block_size(void* p) { return malloc_usable_size(p); }
 #endif
 
 // Live heap bytes (the allocator's block sizes), so a structure's own memory is counted the
-// same way for every node-based or table-based container.
+// same way for every node-based or table-based container. ThreadSanitizer's runtime defines
+// operator new itself, so a TSan build leaves the count at zero.
+#if defined(__SANITIZE_THREAD__)
+#define FST_BENCH_TSAN 1
+#elif defined(__has_feature)
+#if __has_feature(thread_sanitizer)
+#define FST_BENCH_TSAN 1
+#endif
+#endif
 static long long g_live = 0;
+#ifndef FST_BENCH_TSAN
 void* operator new(std::size_t n) {
 	void* p = std::malloc(n ? n : 1);
 	if (!p) { throw std::bad_alloc(); }
@@ -54,6 +63,7 @@ void operator delete(void* p) noexcept {
 	std::free(p);
 }
 void operator delete(void* p, std::size_t) noexcept { operator delete(p); }
+#endif
 
 using clock_type = std::chrono::steady_clock;
 
