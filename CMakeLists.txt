@@ -19,6 +19,12 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_link_libraries(fst_diff PRIVATE fst)
   target_include_directories(fst_diff PRIVATE test)
   add_test(NAME fst_diff COMMAND fst_diff)
+  # The same builder with every node hashing alike, so the registry's same_node() decides each hit.
+  add_executable(fst_collide test/collide.cc)
+  target_link_libraries(fst_collide PRIVATE fst)
+  target_include_directories(fst_collide PRIVATE test)
+  target_compile_definitions(fst_collide PRIVATE FST_TEST_HASH_MASK=0)
+  add_test(NAME fst_collide COMMAND fst_collide)
   # libFuzzer target (Clang): cmake -DFST_FUZZ=ON -DCMAKE_CXX_COMPILER=clang++
   option(FST_FUZZ "Build the libFuzzer target" OFF)
   if(FST_FUZZ)

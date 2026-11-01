@@ -117,7 +117,9 @@ The tests compare `get`, `floor`, `range`, and prefix intersection with `std::ma
 on random key sets over 2-, 8-, and 256-letter alphabets (including the empty key
 and zero outputs) and on the system dictionary. `test/diff.cc` checks that the builder
 emits the same bytes as the reference implementation in `test/fst_old.hh`, and that
-`range` and `for_each` visit the same keys and values.
+`range` and `for_each` visit the same keys and values. `test/collide.cc` gives every
+node the same hash, so the builder's node verification decides each registry hit, and
+checks the bytes against the reference over every small key set and random larger ones.
 
 ## 🎯 When to use it
 

@@ -665,6 +665,9 @@ private:
 	static std::uint64_t hash_of(const pending& n) noexcept {
 		std::uint64_t h = mix(n.is_final ? 0x51ull : 0x3full, n.final_output);
 		for (const auto& a : n.arcs) { h = mix(mix(mix(h, a.label), a.output), a.target); }
+#ifdef FST_TEST_HASH_MASK
+		h &= std::uint64_t(FST_TEST_HASH_MASK);  // tests force collisions so that same_node() decides
+#endif
 		return h;
 	}
 

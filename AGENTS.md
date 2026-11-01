@@ -6,6 +6,8 @@
 fst.hh           Format, map (reader), builder, prefix_automaton.
 test/test.cc     get/floor/range/intersect against std::map; random alphabets and a dictionary.
 test/diff.cc     Byte and traversal equality against the reference test/fst_old.hh.
+test/collide.cc  Builder bytes against the reference with FST_TEST_HASH_MASK=0 (every node hashes alike), so
+                 same_node() decides every registry hit; exhaustive over small key sets plus random sets.
 bench/bench.cc   FST vs open-addressing hash map vs front-coded array: bytes, build, lookup.
 bench/cmp_bench.cc  Build and for_each timings against test/fst_old.hh, with an A/A row.
 docs/fst.d2     README diagram; render: d2 --layout elk --sketch --theme 302 docs/fst.d2 docs/fst.svg
@@ -16,6 +18,8 @@ docs/fst.d2     README diagram; render: d2 --layout elk --sketch --theme 302 doc
 - The format is fixed: children before parents, positive deltas, final output right after the header.
 - Readers over-read up to 16 bytes past a field; the trailer must stay at least 16 bytes.
 - The builder requires strictly increasing keys and throws otherwise.
+- The builder's output must not depend on the registry: bytes are identical for any hash function.
+  `FST_TEST_HASH_MASK` masks every node hash; it exists only for test/collide.cc, never define it in production.
 
 ## Verify a change
 
