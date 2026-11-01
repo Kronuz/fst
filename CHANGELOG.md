@@ -86,7 +86,7 @@ library has no releases.
   | `for_each`, 300k decimal keys | 10.1 | 13.2 | 13.4 | 0.98x |
   | `get`, dictionary | 127 | 126 | 126 | 1.00x |
 
-  The audit's finding E3. (`@@SHA_E3@@`)
+  The audit's finding E3. (`aa3aa3a`)
 
 ### Added
 
