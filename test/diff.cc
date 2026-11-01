@@ -87,6 +87,18 @@ int main() {
 		ref[std::string(500, 'x') + "y"] = 2;
 		compare(ref, rng, "abcxyzAZ09");
 	}
+	// A large set (about 1 MB of output), so that fst_diff_wide's builder switches registry slots mid-build.
+	{
+		reference ref;
+		for (int i = 0; i < 100000; ++i) { ref[rand_key(rng, "abcdefghijklmnopqrstuvwxyz", 10)] = rng() % 1000; }
+		compare(ref, rng, "abcdefghijklmnopqrstuvwxyz");
+#ifdef FST_TEST_NARROW_LIMIT
+		fst::builder fresh, big;
+		for (const auto& [k, v] : ref) { big.insert(k, v); }
+		CHECK(!fresh.registry_is_wide());
+		CHECK(big.registry_is_wide());
+#endif
+	}
 	// Dictionary, if present.
 	if (std::ifstream in("/usr/share/dict/words"); in) {
 		reference ref;

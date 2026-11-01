@@ -75,14 +75,13 @@ keys in one arena) and front coding in blocks of 16; values are key ordinals and
 lookups use shuffled present keys.
 
 `/usr/share/dict/words` (235,976 keys, 9.57 bytes each), Apple M4 Pro, Apple clang 17
-with `-O3 -DNDEBUG`, measured under `quiet strict` at `c57e01f` (two runs agree within
-1% on lookups):
+with `-O3 -DNDEBUG`, measured under `quiet strict` (the mean of two runs):
 
 | Structure | Bytes per key | Build (Mkeys/s) | Lookup p50 |
 |---|---:|---:|---:|
-| fst | 6.20 | 8.6 | 151 ns |
-| Hash map | 62.89 | 33.7 | 24 ns |
-| Front-coded array | 5.94 | 40 | 262 ns |
+| fst | 6.20 | 9.1 | 154 ns |
+| Hash map | 62.89 | 33.3 | 29 ns |
+| Front-coded array | 5.94 | 42.8 | 266 ns |
 | fst over every 32nd key, `floor_value` | 0.36 (84 KB total) | | 111 ns |
 
 ```sh
@@ -94,6 +93,10 @@ The FST is a tenth of the hash map's size and looks up 1.7× faster than the
 front-coded array. The hash map builds and looks up faster and holds no order, so it
 cannot answer prefix, range, or fuzzy queries. As the index over term blocks (an FST
 over every 32nd key), `floor_value` finds a key's block in 111 ns from an 84 KB index.
+
+The builder's node registry takes 16 to 32 bytes per distinct node (8-byte slots in a
+table at most half full; the old and the new table coexist while it doubles). Building
+1 million random 12-letter keys peaks at 165 MiB of RSS, 48 MiB of it the sorted keys.
 
 ## 🧩 Format
 
@@ -120,6 +123,9 @@ emits the same bytes as the reference implementation in `test/fst_old.hh`, and t
 `range` and `for_each` visit the same keys and values. `test/collide.cc` gives every
 node the same hash, so the builder's node verification decides each registry hit, and
 checks the bytes against the reference over every small key set and random larger ones.
+`fst_diff_wide` repeats `test/diff.cc` with the builder's 16-byte registry slots (used
+past 4 GiB of output) taking over at 70 KB, and `test/memory.cc` counts the heap the
+builder and the reference builder use over key counts from 1,000 to 2 million.
 
 ## 🎯 When to use it
 

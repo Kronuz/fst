@@ -46,6 +46,15 @@
 #include <emmintrin.h>
 #endif
 
+// The builder's node writer is inlined into write(): as a call it costs 5-10% of a small build.
+#if defined(__GNUC__) || defined(__clang__)
+#define FST_ALWAYS_INLINE inline __attribute__((always_inline))
+#elif defined(_MSC_VER)
+#define FST_ALWAYS_INLINE __forceinline
+#else
+#define FST_ALWAYS_INLINE inline
+#endif
+
 namespace fst {
 
 // ---------------------------------------------------------------------------------------------
@@ -630,6 +639,10 @@ public:
 		++count_;
 	}
 
+#ifdef FST_TEST_NARROW_LIMIT
+	bool registry_is_wide() const noexcept { return !wide_.empty(); }  // lets tests check the switch happened
+#endif
+
 	// Writes the root and the trailer; returns the FST bytes.
 	std::string finish() {
 		freeze_after(0);
@@ -709,40 +722,113 @@ private:
 		return true;
 	}
 
-	// Flat open-addressing registry of (hash, address) for every node written; a hit is
-	// verified against the bytes already in out_, so no signatures are stored. Address 0 is
-	// never a node (the magic is there), so it marks an empty slot.
-	struct slot { std::uint64_t hash; std::uint64_t address; };
+	// Registry of every node written: open addressing with linear probing over a power-of-two
+	// table kept at most half full. A slot holds the low 32 bits of the node's hash and its
+	// address, so the table never needs the full hash to grow: 8 bytes per slot while the output
+	// is under 4 GiB, 16 bytes (wide_) after. A hit is verified against the node bytes already
+	// in out_, so no signature is stored. Address 0 is never a node (the magic is there): it
+	// marks an empty slot.
+	template <class Address>
+	struct slot { std::uint32_t tag; Address address; };
 
-	void grow() {
-		std::vector<slot> old(table_.empty() ? 1024 : table_.size() * 2);
-		old.swap(table_);
-		const std::size_t mask = table_.size() - 1;
-		for (const slot& s : old) {
+	// The index is at most 32 hash bits: past 2^32 slots (3.2 billion nodes) the wide table
+	// cannot grow, and later nodes are written without being registered.
+	static constexpr std::uint64_t max_slots = std::uint64_t(1) << 32;
+	// The narrow registry is checked every check_every registered nodes: while the output is
+	// smaller than narrow_limit by more than check_every nodes' worth, every address it will
+	// hold until the next check fits in 32 bits.
+#ifdef FST_TEST_NARROW_LIMIT
+	static constexpr std::uint64_t narrow_limit = FST_TEST_NARROW_LIMIT;  // tests switch to 16-byte slots early
+	static constexpr std::size_t check_every = 8;
+#else
+	static constexpr std::uint64_t narrow_limit = std::numeric_limits<std::uint32_t>::max();
+	static constexpr std::size_t check_every = 1024;
+#endif
+
+	// One node takes at most 4,366 bytes (256 transitions, each with an 8-byte output and delta).
+	static constexpr std::uint64_t max_node_bytes = 4608;
+
+	template <class Address>
+	static void grow(std::vector<slot<Address>>& table) {
+		std::vector<slot<Address>> old(table.size() * 2);
+		old.swap(table);
+		const std::size_t mask = table.size() - 1;
+		for (const auto& s : old) {
 			if (!s.address) { continue; }
-			std::size_t i = s.hash & mask;
-			while (table_[i].address) { i = (i + 1) & mask; }
-			table_[i] = s;
+			std::size_t i = s.tag & mask;
+			while (table[i].address) { i = (i + 1) & mask; }
+			table[i] = s;
 		}
+	}
+
+	// Moves the registry to 16-byte slots.
+	void widen() {
+		wide_.resize(narrow_.size());
+		const std::size_t mask = wide_.size() - 1;
+		for (const auto& s : narrow_) {
+			if (!s.address) { continue; }
+			std::size_t i = s.tag & mask;
+			while (wide_[i].address) { i = (i + 1) & mask; }
+			wide_[i] = {s.tag, s.address};
+		}
+		std::vector<slot<std::uint32_t>>().swap(narrow_);
+	}
+
+	// The slow path of write(), taken when used_ reaches threshold_ (every check_every nodes, or
+	// when the table is half full): doubles a half-full table, and moves to wide slots when the
+	// next check_every nodes could pass narrow_limit. Returns false once the registry is wide.
+	bool make_room() {
+		if (out_.size() + check_every * max_node_bytes > narrow_limit) {
+			widen();
+			return false;
+		}
+		if (used_ * 2 >= narrow_.size()) { grow(narrow_); }
+		threshold_ = std::min(narrow_.size() / 2, used_ + check_every);
+		return true;
 	}
 
 	// Returns the address of an equal node already written, or writes this one.
 	std::uint64_t write(const pending& n) {
 		const std::uint64_t hash = hash_of(n);
-		std::size_t slot_index = 0;
-		if (!table_.empty()) {
-			const std::size_t mask = table_.size() - 1;
-			for (slot_index = hash & mask; table_[slot_index].address; slot_index = (slot_index + 1) & mask) {
-				if (table_[slot_index].hash == hash && same_node(table_[slot_index].address, n)) { return table_[slot_index].address; }
-			}
+		if (!wide_.empty()) [[unlikely]] { return write_wide(hash, n); }
+		const std::uint32_t tag = std::uint32_t(hash);
+		std::size_t mask = narrow_.size() - 1;
+		std::size_t at = tag & mask;
+		for (; narrow_[at].address; at = (at + 1) & mask) {
+			if (narrow_[at].tag == tag && same_node(narrow_[at].address, n)) { return narrow_[at].address; }
 		}
-		if ((used_ + 1) * 2 > table_.size()) {
-			grow();
-			const std::size_t mask = table_.size() - 1;
-			slot_index = hash & mask;
-			while (table_[slot_index].address) { slot_index = (slot_index + 1) & mask; }
+		if (used_ >= threshold_) [[unlikely]] {
+			if (!make_room()) { return write_wide(hash, n); }
+			mask = narrow_.size() - 1;
+			for (at = tag & mask; narrow_[at].address; at = (at + 1) & mask) {}
 		}
+		const std::uint64_t address = emit(n);
+		narrow_[at] = {tag, std::uint32_t(address)};
+		++used_;
+		return address;
+	}
 
+	std::uint64_t write_wide(std::uint64_t hash, const pending& n) {
+		const std::uint32_t tag = std::uint32_t(hash);
+		std::size_t mask = wide_.size() - 1;
+		std::size_t at = tag & mask;
+		for (; wide_[at].address; at = (at + 1) & mask) {
+			if (wide_[at].tag == tag && same_node(wide_[at].address, n)) { return wide_[at].address; }
+		}
+		if ((used_ + 1) * 2 > wide_.size()) {
+			if (std::uint64_t(wide_.size()) >= max_slots) { return emit(n); }
+			grow(wide_);
+			mask = wide_.size() - 1;
+			for (at = tag & mask; wide_[at].address; at = (at + 1) & mask) {}
+		}
+		const std::uint64_t address = emit(n);
+		wide_[at] = {tag, address};
+		++used_;
+		return address;
+	}
+
+	// Appends the node to out_ and returns its address.
+	FST_ALWAYS_INLINE std::uint64_t emit(const pending& n) {
 		const std::uint64_t address = out_.size();
 		std::uint8_t h = (n.is_final ? detail::final_bit : 0) | (n.final_output ? detail::final_output_bit : 0);
 		if (n.arcs.size() == 1) {
@@ -770,8 +856,6 @@ private:
 				for (const auto& a : n.arcs) { detail::put_le(out_, address - a.target, tb); }
 			}
 		}
-		table_[slot_index] = {hash, address};
-		++used_;
 		return address;
 	}
 
@@ -779,8 +863,10 @@ private:
 	std::vector<pending> stack_;  // stack_[d]: the unfrozen node at depth d of the last key
 	std::string last_;
 	std::uint64_t count_ = 0;
-	std::vector<slot> table_;
+	std::vector<slot<std::uint32_t>> narrow_ = std::vector<slot<std::uint32_t>>(1024);
+	std::vector<slot<std::uint64_t>> wide_;  // replaces narrow_ once an address passes 32 bits
 	std::size_t used_ = 0;
+	std::size_t threshold_ = 0;  // narrow registry: used_ at which write() calls make_room()
 };
 
 // ---------------------------------------------------------------------------------------------
@@ -802,3 +888,5 @@ struct prefix_automaton {
 };
 
 }  // namespace fst
+
+#undef FST_ALWAYS_INLINE

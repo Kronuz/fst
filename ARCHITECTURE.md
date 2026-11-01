@@ -8,11 +8,14 @@ Inserting a key:
 1. Finds the common prefix with the previous key.
 2. Freezes every node below that prefix, deepest first. Freezing hashes the node
    (final flag, final output, and each transition's label, output, and target address)
-   and looks the hash up in a flat open-addressing table of (hash, address). A hit is
-   verified against the node's bytes already in the output; an equal node is reused,
-   otherwise the node is written and its address added. This shares equal suffixes and
-   keeps the FST minimal. The table stores no per-node signature, and pending nodes are
-   cleared in place, so freezing does no per-node allocation.
+   and looks the hash up in a flat open-addressing table with linear probing, kept at
+   most half full. A slot holds the low 32 bits of the hash and the node's address: 8
+   bytes while the output is under 4 GiB, 16 bytes after. A hit is verified against the
+   node's bytes already in the output; an equal node is reused, otherwise the node is
+   written and its address added. This shares equal suffixes and keeps the FST minimal.
+   The table stores no per-node signature, so it costs 16 to 32 bytes per node while the
+   output is under 4 GiB (and the old and new tables coexist while it doubles), and
+   pending nodes are cleared in place, so freezing does no per-node allocation.
 3. Pushes outputs down the shared prefix: each transition keeps the minimum of its
    output and the remaining value, and the excess moves to the child's transitions and
    final output.
