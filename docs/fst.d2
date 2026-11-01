@@ -1,17 +1,22 @@
-# fst: shared prefixes and suffixes; a key's value is the sum of outputs on its path.
+# fst: "in", "on" and "tin" share the suffix "n"; a key's value is the sum of the outputs on its path.
 # Render: d2 --layout elk --sketch --theme 302 docs/fst.d2 docs/fst.svg
-direction: right
-s0: start {shape: circle}
-s1: "" {shape: circle}
-s2: "" {shape: circle}
-s3: "" {shape: circle}
-end: final {shape: circle; style.double-border: true}
-s0 -> s1: "m / 0"
-s0 -> s2: "s / 2"
-s1 -> s3: "o / 0"
-s2 -> s3: "t / 0"
-s3 -> end: "p / 1"
-note: keys {
-  label: "\"mop\" → 1\n\"stop\" → 3 (via \"s / 2\")"
+vars: { d2-config: { layout-engine: elk; theme-id: 302; sketch: true; pad: 24 } }
+grid-rows: 2
+grid-columns: 3
+horizontal-gap: 240
+vertical-gap: 200
+
+start: start {shape: circle}
+n: "" {shape: circle}
+final: final {shape: circle; style.double-border: true}
+t: "" {shape: circle}
+gap: "" {style.opacity: 0}
+keys: "in → 1\non → 2\ntin → 3" {
   shape: page
+  style.fill: "#F4F1EA"
 }
+
+start -> n: "i / 1, o / 2"
+n -> final: "n / 0"
+start -> t: "t / 3"
+t -> n: "i / 0"
