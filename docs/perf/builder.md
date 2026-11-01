@@ -1,6 +1,6 @@
 # Builder registry and traversal: measurements
 
-Measured 2026-11-01 on the `fst.hh` of `fst:3b845a6`, with the benches of `fst:e4fa6a6` and `fst:dbb8f4d` and the mutant tool of the commit that adds this note. The per-version tables of the changes that produced the current builder (the reference, the 16-byte-slot registry, now) are in [CHANGELOG.md](../../CHANGELOG.md) under 2026-10-31.
+Measured 2026-11-01 on the `fst.hh` of `fst:3b845a6`, with the benches of `fst:e4fa6a6` and `fst:dbb8f4d` and the mutant tool of `fst:ff95225`. The per-version tables of the changes that produced the current builder (the reference, the 16-byte-slot registry, now) are in [CHANGELOG.md](../../CHANGELOG.md) under 2026-10-31.
 
 ## Change
 
