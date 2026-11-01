@@ -1,2 +1,6 @@
 .scratch/
 build*/
+ubsan/
+asan/
+tsan/
+cmake-build-*/
