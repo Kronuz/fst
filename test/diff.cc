@@ -40,6 +40,15 @@ static void compare(const reference& ref, std::mt19937_64& rng, const std::strin
 		return k;
 	};
 	CHECK(collect(nm, {}, {}, ~std::size_t(0)) == collect(om, {}, {}, ~std::size_t(0)));
+	// for_each is its own walk (no bounds to test): it must visit what the reference visits, and stop when asked.
+	auto each = [](auto& m, std::size_t limit) {
+		entries e;
+		m.for_each([&](std::string_view k, std::uint64_t v) { e.emplace_back(std::string(k), v); return e.size() < limit; });
+		return e;
+	};
+	CHECK(each(nm, ~std::size_t(0)) == each(om, ~std::size_t(0)));
+	CHECK(each(nm, ~std::size_t(0)) == collect(nm, {}, {}, ~std::size_t(0)));
+	for (std::size_t limit : {1, 2, 3, 7}) { CHECK(each(nm, limit) == each(om, limit)); }
 	for (int i = 0; i < 40; ++i) {
 		std::string lo = random_key(), hi = random_key();
 		std::size_t limit = (rng() % 3 == 0) ? rng() % 5 + 1 : ~std::size_t(0);

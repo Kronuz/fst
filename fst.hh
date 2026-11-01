@@ -367,6 +367,18 @@ public:
 	// Iterative depth-first walk in label order, so deep keys never grow the native stack.
 	template <typename F>
 	void range(std::string_view lo, std::string_view hi, F&& f) const {
+		walk<true>(lo, hi, std::forward<F>(f));
+	}
+
+	template <typename F>
+	void for_each(F&& f) const {
+		walk<false>({}, {}, std::forward<F>(f));
+	}
+
+private:
+	// The walk behind range() and for_each(); without bounds (bounded false) it tests none.
+	template <bool bounded, typename F>
+	void walk(std::string_view lo, std::string_view hi, F&& f) const {
 		// A frame holds just enough of a node to step through its transitions; the next
 		// transition is decoded only when it is taken.
 		struct frame {
@@ -390,16 +402,22 @@ public:
 			const std::uint8_t* p = base + address;
 			const std::uint8_t h = *p++;
 			const std::uint64_t final_out = (h & detail::final_output_bit) ? detail::get_varint(p) : 0;
-			if ((h & detail::final_bit) && !(on_lo && depth < lo.size())) {
-				const std::string_view path(key.data(), depth);
-				if (!hi.empty() && path >= hi) { return false; }
-				if (!f(path, out + final_out)) { return false; }
+			if (h & detail::final_bit) {
+				bool is_key = true;
+				if constexpr (bounded) { is_key = !(on_lo && depth < lo.size()); }
+				if (is_key) {
+					const std::string_view path(key.data(), depth);
+					if constexpr (bounded) {
+						if (!hi.empty() && path >= hi) { return false; }
+					}
+					if (!f(path, out + final_out)) { return false; }
+				}
 			}
 			frame fr;
 			fr.address = address;
 			fr.out = out;
 			fr.next = 0;
-			fr.on_lo = on_lo;
+			if constexpr (bounded) { fr.on_lo = on_lo; }
 			if (h & detail::chain_bit) {
 				fr.labels = nullptr;
 				fr.count = 1;
@@ -420,12 +438,14 @@ public:
 					fr.deltas = p + count * fr.ob;
 				}
 			}
-			if (on_lo && depth < lo.size()) {
-				const std::uint8_t want = std::uint8_t(lo[depth]);
-				if (!fr.labels) {
-					if (fr.count && fr.only_label < want) { fr.next = 1; }
-				} else {
-					while (fr.next < fr.count && fr.labels[fr.next] < want) { ++fr.next; }
+			if constexpr (bounded) {
+				if (on_lo && depth < lo.size()) {
+					const std::uint8_t want = std::uint8_t(lo[depth]);
+					if (!fr.labels) {
+						if (fr.count && fr.only_label < want) { fr.next = 1; }
+					} else {
+						while (fr.next < fr.count && fr.labels[fr.next] < want) { ++fr.next; }
+					}
 				}
 			}
 			stack.push_back(fr);
@@ -452,20 +472,20 @@ public:
 			}
 			++top.next;
 			const std::size_t depth = stack.size() - 1;
-			const bool still_lo = top.on_lo && depth < lo.size() && label == std::uint8_t(lo[depth]);
+			bool still_lo = false;
+			if constexpr (bounded) { still_lo = top.on_lo && depth < lo.size() && label == std::uint8_t(lo[depth]); }
 			const std::uint64_t out = top.out + t_out;
 			if (key.size() <= depth) { key.resize(key.size() * 2); }
 			key[depth] = char(label);
 			// Everything under the path is >= it; stop once the path itself reaches hi.
-			if (!hi.empty() && std::string_view(key.data(), depth + 1) >= hi) { return; }
+			if constexpr (bounded) {
+				if (!hi.empty() && std::string_view(key.data(), depth + 1) >= hi) { return; }
+			}
 			if (!enter(target, out, still_lo)) { return; }
 		}
 	}
 
-	template <typename F>
-	void for_each(F&& f) const {
-		range({}, {}, std::forward<F>(f));
-	}
+public:
 
 	// Calls f(key, value) for each key the automaton accepts, in ascending order. The
 	// automaton provides start(), accept(state, byte), is_match(state), can_match(state).

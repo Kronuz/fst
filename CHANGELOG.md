@@ -88,8 +88,32 @@ library has no releases.
 
   The audit's finding E3. (`aa3aa3a`)
 
+- `for_each` walks with the bound tests compiled out: `range` and `for_each` share one
+  template, `walk<bounded>`, and `for_each` instantiates it without the lower and upper
+  bound checks, the on-path flag and the skip of labels below the lower bound. Visit order
+  and results are unchanged. With LLVM on x86-64 the `range` of the previous change was
+  slower than the original code on `for_each` (Intel i9-9980HK, LLVM 23: 0.68x to 0.85x
+  of the reference on four key sets); it is now 1.06x to 1.25x, and 1.2x to 1.3x with Apple
+  clang 17 (was 1.1x). ns per key, one binary per version, best of 3 alternating runs under
+  `quiet strict`, "reference" is `12657aa` and "before" is `aa3aa3a`:
+
+  | row | i9 LLVM 23: reference / before / now | i9 Apple clang 17 | M4 Apple clang 17 |
+  |---|---:|---:|---:|
+  | dictionary (236k keys) | 53.2 / 62.6 / 49.4 | 70.5 / 63.6 / 58.5 | 57.4 / 36.7 / 34.8 |
+  | 300k decimal keys | 8.9 / 13.2 / 7.1 | 14.6 / 12.8 / 11.3 | 9.1 / 5.0 / 4.5 |
+  | 200k random 12-letter keys | 63.3 / 76.2 / 59.6 | 90.5 / 78.4 / 72.4 | 68.9 / 41.7 / 40.4 |
+  | 20k keys of 200 bytes | 1643 / 2275 / 1499 | 2434 / 2059 / 1881 | 1986 / 1099 / 1088 |
+  | `range`, first 10 keys of 200k (ns per call) | 1340 / 993 / 1050 | 1399 / 1078 / 1098 | 826 / 497 / 496 |
+
+  The audit's finding E5, which it measured on `docset`; the same effect showed in `fst`
+  on the x86-64 LLVM rows. (`@@SHA_E5@@`)
+
 ### Added
 
+- `test/diff.cc` compares `for_each` (it covered `range` only) with the reference, with
+  and without an early stop, over every key set it builds. A mutant that makes
+  `for_each` emit no keys, one that ignores the stop, one that drops the transition output
+  and one that never advances fail it.
 - `test/collide.cc` (`fst_collide`): the builder under `FST_TEST_HASH_MASK=0`, a test-only
   macro that gives every node the same hash, so that `same_node()` alone decides every
   registry hit. It compares the builder's bytes with the reference over every subset of the

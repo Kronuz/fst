@@ -57,4 +57,5 @@ label and prunes branches where `can_match` is false.
 
 `range` keeps one small frame per level (node pointers and a transition cursor),
 decodes a transition only when it takes it, and writes the key into a preallocated
-buffer.
+buffer. `for_each` runs the same walk compiled without the bound tests (a template
+parameter), which LLVM would otherwise not remove.
