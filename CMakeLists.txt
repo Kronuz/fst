@@ -51,4 +51,8 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_include_directories(fst_cmp_bench PRIVATE test)
   add_executable(fst_bench bench/bench.cc)
   target_link_libraries(fst_bench PRIVATE fst)
+  # Peak RSS of a build, the builder against the reference, one process per measurement.
+  add_executable(fst_build_rss bench/build_rss.cc)
+  target_link_libraries(fst_build_rss PRIVATE fst)
+  target_include_directories(fst_build_rss PRIVATE test)
 endif()
