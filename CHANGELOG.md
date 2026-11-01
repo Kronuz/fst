@@ -106,7 +106,7 @@ library has no releases.
   | `range`, first 10 keys of 200k (ns per call) | 1340 / 993 / 1050 | 1399 / 1078 / 1098 | 826 / 497 / 496 |
 
   The audit's finding E5, which it measured on `docset`; the same effect showed in `fst`
-  on the x86-64 LLVM rows. (`@@SHA_E5@@`)
+  on the x86-64 LLVM rows. (`fe22b32`)
 
 ### Added
 
