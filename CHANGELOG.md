@@ -65,7 +65,7 @@ library has no releases.
   more than 0.81x of it. A build of 1 to 16 keys is faster too, because the first table is
   8 KiB instead of 16 KiB. Output bytes are identical. Times in ns per key, one binary per
   version (reference is `12657aa`), best of 3 alternating runs on the M4 and of 2 on the
-  i9, under `quiet strict`; the control run of the previous version against itself agrees
+  i9, on an otherwise idle host; the control run of the previous version against itself agrees
   within 3%:
 
   Apple M4 Pro, Apple clang 17:
@@ -130,8 +130,8 @@ library has no releases.
   and results are unchanged. With LLVM on x86-64 the `range` of the previous change was
   slower than the original code on `for_each` (Intel i9-9980HK, LLVM 23: 0.68x to 0.85x
   of the reference on four key sets); it is now 1.06x to 1.25x, and 1.2x to 1.3x with Apple
-  clang 17 (was 1.1x). ns per key, one binary per version, best of 3 alternating runs under
-  `quiet strict`, "reference" is `12657aa` and "before" is `aa3aa3a`:
+  clang 17 (was 1.1x). ns per key, one binary per version, best of 3 alternating runs on an
+  otherwise idle host, "reference" is `12657aa` and "before" is `aa3aa3a`:
 
   | row | i9 LLVM 23: reference / before / now | i9 Apple clang 17 | M4 Apple clang 17 |
   |---|---:|---:|---:|
