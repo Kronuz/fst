@@ -95,8 +95,11 @@ cannot answer prefix, range, or fuzzy queries. As the index over term blocks (an
 over every 32nd key), `floor_value` finds a key's block in 111 ns from an 84 KB index.
 
 The builder's node registry takes 16 to 32 bytes per distinct node (8-byte slots in a
-table at most half full; the old and the new table coexist while it doubles). Building
-1 million random 12-letter keys peaks at 165 MiB of RSS, 48 MiB of it the sorted keys.
+table at most half full; the old and the new table coexist while it doubles). On the
+M4, a process that builds 1 million random 12-letter keys peaks at 156 MiB of RSS, 24 MiB
+of it the sorted keys; the reference builder in `test/fst_old.hh` peaks at 344 MiB
+(`build/fst_build_rss`). [docs/perf/builder.md](docs/perf/builder.md) has the method and
+the numbers for the builder's time and memory.
 
 ## 🧩 Format
 
@@ -113,7 +116,9 @@ See [ARCHITECTURE.md](ARCHITECTURE.md).
 ```sh
 cmake -S . -B build && cmake --build build && ctest --test-dir build
 build/fst_bench KEYS_FILE
-build/fst_cmp_bench KEYS_FILE   # build and for_each against the reference test/fst_old.hh
+build/fst_cmp_bench KEYS_FILE   # build, for_each and edge rows against the reference test/fst_old.hh
+build/fst_build_rss             # peak RSS of a build, the builder against the reference
+python3 tools/mutants.py        # breaks fst.hh in 21 ways; the tests must fail on each
 ```
 
 The tests compare `get`, `floor`, `range`, and prefix intersection with `std::map`
@@ -141,6 +146,7 @@ builder and the reference builder use over key counts from 1,000 to 2 million.
 ## 📚 Documentation
 
 - [ARCHITECTURE.md](ARCHITECTURE.md): the design and the format.
+- [docs/perf/builder.md](docs/perf/builder.md): the builder's registry and the traversal, measured.
 - [CHANGELOG.md](CHANGELOG.md): changes by date.
 - [AGENTS.md](AGENTS.md): repository map and invariants.
 

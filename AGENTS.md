@@ -12,7 +12,12 @@ test/collide.cc  Builder bytes against the reference with FST_TEST_HASH_MASK=0 (
 test/memory.cc   Peak heap (counted through operator new) of the builder against the reference builder over a
                  sweep of key counts.
 bench/bench.cc   FST vs open-addressing hash map vs front-coded array: bytes, build, lookup.
-bench/cmp_bench.cc  Build and for_each timings against test/fst_old.hh, with an A/A row.
+bench/cmp_bench.cc  Build and for_each timings against test/fst_old.hh over a word list, then edge rows (builds from 1 to
+                 300,000 keys, decimal, random and 200-byte keys, range, intersect, get), all with an A/A row.
+bench/build_rss.cc  Peak RSS of one build, the builder against the reference, one process per measurement (fst_build_rss).
+tools/mutants.py  Breaks same_node(), the registry's slot switch and the for_each walk in 21 ways and requires the tests
+                 to fail on each.
+docs/perf/builder.md  The registry and the traversal, measured: method, tables, variants not taken, open items.
 docs/fst.d2     README diagram; render: d2 --layout elk --sketch --theme 302 docs/fst.d2 docs/fst.svg
 ```
 
@@ -30,5 +35,6 @@ docs/fst.d2     README diagram; render: d2 --layout elk --sketch --theme 302 doc
 ```sh
 cmake -S . -B build && cmake --build build && ctest --test-dir build
 cmake -S . -B asan -DCMAKE_CXX_FLAGS="-fsanitize=address,undefined" && cmake --build asan && ctest --test-dir asan
+python3 tools/mutants.py    # after touching same_node(), the registry or the walk
 build/fst_bench /usr/share/dict/words
 ```

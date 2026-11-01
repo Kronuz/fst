@@ -4,6 +4,42 @@ Notable changes to fst, newest first. The format follows
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/); entries are dated because the
 library has no releases.
 
+## 2026-11-01
+
+### Added
+
+- `bench/build_rss.cc` (`fst_build_rss`): the peak resident set of a process that builds one
+  FST from N random 12-letter keys, with the builder and with the reference builder, one
+  process per measurement, and a check that both produce the same bytes. `fst_memory` counts
+  the heap and fails on a regression; this reports the resident set the README and the
+  2026-10-31 entry quote, which was measured by a probe that was not in the repository. The
+  audit's finding E3: peak build memory had no bench.
+- `bench/cmp_bench.cc`: edge rows after the word-list rows, each against the reference with an
+  A/A row: builds of 1 to 4,096 random keys, of 300,000 random 12-letter keys, of 300,000
+  decimal keys and of 20,000 keys of 200 bytes; `for_each` on the last three and on 200,000
+  random keys; `range` from a 3-letter prefix returning 1, 10 and 100 keys; prefix `intersect`;
+  `get`. They cover shapes the word list does not (the registry's first table dominating a
+  small build, long chains, long keys, short `range` calls) and are the rows the audit timed
+  by hand. `fst_cmp_bench KEYS_FILE ROWS` runs the edge rows whose group name contains ROWS,
+  and runs them alone when KEYS_FILE has no keys.
+- `tools/mutants.py`: breaks `same_node()` (11 mutants), the registry's switch to 16-byte
+  slots (6) and the `for_each` walk (4) and requires the tests to fail on each. The mutants
+  quoted below were run by hand until now.
+- `docs/perf/builder.md`: the registry and the traversal, measured: method, memory by key count,
+  the edge rows on the M4 and the i9 with three compilers, the variants that were not taken,
+  the proof and the open items.
+
+### Documentation
+
+- The `for_each` table of 2026-10-31 labelled one row "200k random 12-letter keys"; its keys
+  have 1 to 12 letters. The label is corrected.
+- The 2026-10-31 entry for `test/memory.cc` counted the sizes the previous registry fails at
+  as 6 of 15, up to 1.48x. Run against the header of `7376bd9` it fails at 8 of 15 on the M4
+  with libc++, up to 1.44x; the entry states that.
+- The README quotes the resident set that `fst_build_rss` prints (156 MiB for 1 million keys,
+  24 MiB of it the sorted keys). The 2026-10-31 table was measured by a probe that grew its key
+  vector by `push_back`; its numbers differ from the bench's by 2% to 12%.
+
 ## 2026-10-31
 
 ### Changed
@@ -101,7 +137,7 @@ library has no releases.
   |---|---:|---:|---:|
   | dictionary (236k keys) | 53.2 / 62.6 / 49.4 | 70.5 / 63.6 / 58.5 | 57.4 / 36.7 / 34.8 |
   | 300k decimal keys | 8.9 / 13.2 / 7.1 | 14.6 / 12.8 / 11.3 | 9.1 / 5.0 / 4.5 |
-  | 200k random 12-letter keys | 63.3 / 76.2 / 59.6 | 90.5 / 78.4 / 72.4 | 68.9 / 41.7 / 40.4 |
+  | 200k random keys of 1 to 12 letters | 63.3 / 76.2 / 59.6 | 90.5 / 78.4 / 72.4 | 68.9 / 41.7 / 40.4 |
   | 20k keys of 200 bytes | 1643 / 2275 / 1499 | 2434 / 2059 / 1881 | 1986 / 1099 / 1088 |
   | `range`, first 10 keys of 200k (ns per call) | 1340 / 993 / 1050 | 1399 / 1078 / 1098 | 826 / 497 / 496 |
 
@@ -123,7 +159,8 @@ library has no releases.
   let ten and nine of them through. The audit's finding E2. (`9af3f3f`)
 - `test/memory.cc` (`fst_memory`): the builder's peak heap, counted through `operator new`,
   against the reference builder's over 15 key counts from 1,000 to 2 million; it fails for
-  the previous registry at 6 of the 15 (up to 1.48x at 5,000 keys).
+  the previous registry (`7376bd9`) at 8 of the 15 on the M4 with libc++, up to 1.44x at
+  5,000 keys.
 - `fst_diff_wide`: `test/diff.cc` with `FST_TEST_NARROW_LIMIT=70000`, a test-only macro that
   makes the registry switch to 16-byte slots at 70 KB, during the larger sets, so the switch
   and the wide table run against the reference. Six mutants of the switch fail it.
