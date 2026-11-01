@@ -1,15 +1,59 @@
-// FST against an open-addressing hash map and a front-coded sorted array on a
-// vocabulary (one key per line): build rate, bytes per key, and lookup time.
+// FST against reference structures and well-known comparators on a vocabulary (one key per
+// line): build rate, bytes per key, lookup time, and a check that every structure agrees.
 //   fst_bench KEYS_FILE
+// std::map and std::unordered_map are always in; absl::flat_hash_map and marisa-trie are in
+// when CMake is configured with -DFST_BENCH_COMPARATORS=ON.
 #include "fst.hh"
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <fstream>
+#include <functional>
+#include <map>
+#include <memory>
+#include <new>
+#include <optional>
 #include <random>
 #include <string>
+#include <string_view>
+#include <unordered_map>
 #include <vector>
+
+#ifdef FST_BENCH_ABSEIL
+#include "absl/container/flat_hash_map.h"
+#endif
+#ifdef FST_BENCH_MARISA
+#include <marisa.h>
+#endif
+
+#if defined(__APPLE__)
+#include <malloc/malloc.h>
+static std::size_t block_size(void* p) { return malloc_size(p); }
+#elif defined(__FreeBSD__)
+#include <malloc_np.h>
+static std::size_t block_size(void* p) { return malloc_usable_size(p); }
+#else
+#include <malloc.h>
+static std::size_t block_size(void* p) { return malloc_usable_size(p); }
+#endif
+
+// Live heap bytes (the allocator's block sizes), so a structure's own memory is counted the
+// same way for every node-based or table-based container.
+static long long g_live = 0;
+void* operator new(std::size_t n) {
+	void* p = std::malloc(n ? n : 1);
+	if (!p) { throw std::bad_alloc(); }
+	g_live += (long long)block_size(p);
+	return p;
+}
+void operator delete(void* p) noexcept {
+	if (p) { g_live -= (long long)block_size(p); }
+	std::free(p);
+}
+void operator delete(void* p, std::size_t) noexcept { operator delete(p); }
 
 using clock_type = std::chrono::steady_clock;
 
@@ -125,6 +169,62 @@ static double median_lookup_ns(const std::vector<std::string_view>& queries, Loo
 	return batches[batches.size() / 2];
 }
 
+// Transparent hash and equality so unordered_map finds a string_view without a copy.
+struct sv_hash {
+	using is_transparent = void;
+	std::size_t operator()(std::string_view k) const noexcept { return std::hash<std::string_view>()(k); }
+};
+struct sv_equal {
+	using is_transparent = void;
+	bool operator()(std::string_view a, std::string_view b) const noexcept { return a == b; }
+};
+using std_map = std::map<std::string, std::uint64_t, std::less<>>;
+using std_unordered_map = std::unordered_map<std::string, std::uint64_t, sv_hash, sv_equal>;
+
+// Best of `repeats` wall times of one construction.
+template <typename Make>
+static double best_build_seconds(int repeats, Make&& make) {
+	double best = 1e300;
+	for (int i = 0; i < repeats; ++i) {
+		auto t = clock_type::now();
+		auto built = make();
+		best = std::min(best, seconds_since(t));
+		(void)built;
+	}
+	return best;
+}
+
+// Heap bytes the structure built by `make` keeps alive (the temporaries are gone by then).
+template <typename Make>
+static std::size_t live_heap_bytes(Make&& make) {
+	long long before = g_live;
+	auto built = make();
+	long long after = g_live;
+	(void)built;
+	return std::size_t(after - before);
+}
+
+static void require_equal(const char* name, std::string_view key, std::optional<std::uint64_t> got, std::uint64_t want) {
+	if (!got || *got != want) {
+		std::fprintf(stderr, "MISMATCH: %s returned %s for \"%.*s\", expected ordinal %llu\n", name,
+			got ? std::to_string(*got).c_str() : "nothing", int(key.size()), key.data(), (unsigned long long)want);
+		std::abort();
+	}
+}
+
+static void require_absent(const char* name, std::string_view key, bool found) {
+	if (found) {
+		std::fprintf(stderr, "MISMATCH: %s found the absent key \"%.*s\"\n", name, int(key.size()), key.data());
+		std::abort();
+	}
+}
+
+struct result {
+	std::string name;
+	std::size_t bytes = 0;
+	double build_s = 0, lookup_ns = 1e300;
+};
+
 int main(int argc, char** argv) {
 	const char* path = argc > 1 ? argv[1] : "/usr/share/dict/words";
 	std::ifstream in(path);
@@ -138,19 +238,122 @@ int main(int argc, char** argv) {
 	for (const auto& k : keys) { key_bytes += k.size(); }
 	std::printf("%zu keys, %.2f bytes per key on average\n\n", keys.size(), double(key_bytes) / double(keys.size()));
 
-	auto t = clock_type::now();
-	fst::builder b;
-	for (std::size_t i = 0; i < keys.size(); ++i) { b.insert(keys[i], i); }
-	std::string bytes = b.finish();
-	double fst_build = seconds_since(t);
+	constexpr int build_repeats = 5;
+	const auto make_fst = [&] {
+		fst::builder b;
+		for (std::size_t i = 0; i < keys.size(); ++i) { b.insert(keys[i], i); }
+		return b.finish();
+	};
+	const auto make_std_map = [&] {
+		auto m = std::make_unique<std_map>();
+		for (std::size_t i = 0; i < keys.size(); ++i) { m->emplace_hint(m->end(), keys[i], i); }
+		return m;
+	};
+	const auto make_std_unordered_map = [&] {
+		auto m = std::make_unique<std_unordered_map>();
+		m->reserve(keys.size());
+		for (std::size_t i = 0; i < keys.size(); ++i) { m->emplace(keys[i], i); }
+		return m;
+	};
+
+	std::vector<result> results;
+	auto add = [&](const char* name, std::size_t bytes, double build_s) {
+		results.push_back(result{name, bytes, build_s, 1e300});
+		return results.size() - 1;
+	};
+
+	std::string bytes = make_fst();
+	std::size_t r_fst = add("fst", bytes.size(), best_build_seconds(build_repeats, make_fst));
 	fst::map m(bytes);
 
-	t = clock_type::now();
+	std::size_t r_hash = add("hash map", 0, best_build_seconds(build_repeats, [&] { return hash_map(keys); }));
 	hash_map h(keys);
-	double hash_build = seconds_since(t);
-	t = clock_type::now();
+	results[r_hash].bytes = h.bytes();
+	std::size_t r_fc = add("front-coded", 0, best_build_seconds(build_repeats, [&] { return front_coded(keys); }));
 	front_coded fc(keys);
-	double fc_build = seconds_since(t);
+	results[r_fc].bytes = fc.bytes();
+
+	std::size_t r_map = add("std::map", live_heap_bytes(make_std_map), best_build_seconds(build_repeats, make_std_map));
+	auto smap = make_std_map();
+	std::size_t r_umap = add("std::unordered_map", live_heap_bytes(make_std_unordered_map), best_build_seconds(build_repeats, make_std_unordered_map));
+	auto sumap = make_std_unordered_map();
+
+#ifdef FST_BENCH_ABSEIL
+	using absl_map = absl::flat_hash_map<std::string, std::uint64_t>;
+	const auto make_absl = [&] {
+		auto a = std::make_unique<absl_map>();
+		a->reserve(keys.size());
+		for (std::size_t i = 0; i < keys.size(); ++i) { a->emplace(keys[i], i); }
+		return a;
+	};
+	std::size_t r_absl = add("absl::flat_hash_map", live_heap_bytes(make_absl), best_build_seconds(build_repeats, make_absl));
+	auto amap = make_absl();
+#endif
+#ifdef FST_BENCH_MARISA
+	const auto make_marisa = [&] {
+		auto t = std::make_unique<marisa::Trie>();
+		marisa::Keyset ks;
+		for (const auto& k : keys) { ks.push_back(k.data(), k.size()); }
+		t->build(ks);
+		return t;
+	};
+	auto mtrie = make_marisa();
+	std::size_t r_marisa = add("marisa-trie", mtrie->io_size(), best_build_seconds(build_repeats, make_marisa));
+	marisa::Agent magent;
+	const auto marisa_id = [&](std::string_view k) -> std::optional<std::uint64_t> {
+		magent.set_query(k.data(), k.size());
+		if (!mtrie->lookup(magent)) { return std::nullopt; }
+		return magent.key().id();
+	};
+#endif
+
+	// Every structure returns the key's ordinal for every key and nothing for an absent key.
+	// marisa-trie numbers the keys itself, so its ids are checked to be a bijection onto
+	// [0, n) that reverse_lookup maps back to the key.
+	{
+		std::size_t absent_checked = 0;
+#ifdef FST_BENCH_MARISA
+		std::vector<bool> seen(keys.size(), false);
+#endif
+		for (std::size_t i = 0; i < keys.size(); ++i) {
+			const std::string& k = keys[i];
+			require_equal("fst", k, m.get(k), i);
+			require_equal("hash map", k, h.get(k), i);
+			require_equal("front-coded", k, fc.get(k), i);
+			auto it = smap->find(std::string_view(k));
+			require_equal("std::map", k, it == smap->end() ? std::nullopt : std::optional<std::uint64_t>(it->second), i);
+			auto uit = sumap->find(std::string_view(k));
+			require_equal("std::unordered_map", k, uit == sumap->end() ? std::nullopt : std::optional<std::uint64_t>(uit->second), i);
+#ifdef FST_BENCH_ABSEIL
+			auto ait = amap->find(std::string_view(k));
+			require_equal("absl::flat_hash_map", k, ait == amap->end() ? std::nullopt : std::optional<std::uint64_t>(ait->second), i);
+#endif
+#ifdef FST_BENCH_MARISA
+			auto id = marisa_id(k);
+			if (!id || *id >= keys.size() || seen[*id]) { std::fprintf(stderr, "MISMATCH: marisa-trie id for \"%s\" is missing, out of range or repeated\n", k.c_str()); std::abort(); }
+			seen[*id] = true;
+			magent.set_query(std::size_t(*id));
+			mtrie->reverse_lookup(magent);
+			if (std::string_view(magent.key().ptr(), magent.key().length()) != k) { std::fprintf(stderr, "MISMATCH: marisa-trie reverse_lookup of %llu is not \"%s\"\n", (unsigned long long)*id, k.c_str()); std::abort(); }
+#endif
+			if (i % 7 == 0) {
+				const std::string absent = k + "\x01";
+				require_absent("fst", absent, m.get(absent).has_value());
+				require_absent("hash map", absent, h.get(absent).has_value());
+				require_absent("front-coded", absent, fc.get(absent).has_value());
+				require_absent("std::map", absent, smap->find(std::string_view(absent)) != smap->end());
+				require_absent("std::unordered_map", absent, sumap->find(std::string_view(absent)) != sumap->end());
+#ifdef FST_BENCH_ABSEIL
+				require_absent("absl::flat_hash_map", absent, amap->find(std::string_view(absent)) != amap->end());
+#endif
+#ifdef FST_BENCH_MARISA
+				require_absent("marisa-trie", absent, marisa_id(absent).has_value());
+#endif
+				++absent_checked;
+			}
+		}
+		std::printf("verified: every structure returns the same ordinal for all %zu keys and finds none of %zu absent keys\n\n", keys.size(), absent_checked);
+	}
 
 	std::vector<std::string_view> queries;
 	std::mt19937_64 rng(3);
@@ -160,22 +363,27 @@ int main(int argc, char** argv) {
 	std::shuffle(queries.begin(), queries.end(), rng);
 	if (queries.size() > 2000 * 1024) { queries.resize(2000 * 1024); }
 
-	// Interleave the three lookups three times; keep each one's best median.
-	double fst_ns = 1e300, hash_ns = 1e300, fc_ns = 1e300;
+	// Interleave the lookups three times; keep each one's best median.
+	auto timed = [&](std::size_t r, auto&& lookup) { results[r].lookup_ns = std::min(results[r].lookup_ns, median_lookup_ns(queries, lookup)); };
 	for (int round = 0; round < 3; ++round) {
-		fst_ns = std::min(fst_ns, median_lookup_ns(queries, [&](std::string_view k) { return m.get(k); }));
-		hash_ns = std::min(hash_ns, median_lookup_ns(queries, [&](std::string_view k) { return h.get(k); }));
-		fc_ns = std::min(fc_ns, median_lookup_ns(queries, [&](std::string_view k) { return fc.get(k); }));
+		timed(r_fst, [&](std::string_view k) { return m.get(k); });
+		timed(r_hash, [&](std::string_view k) { return h.get(k); });
+		timed(r_fc, [&](std::string_view k) { return fc.get(k); });
+		timed(r_map, [&](std::string_view k) { return std::optional<std::uint64_t>(smap->find(k)->second); });
+		timed(r_umap, [&](std::string_view k) { return std::optional<std::uint64_t>(sumap->find(k)->second); });
+#ifdef FST_BENCH_ABSEIL
+		timed(r_absl, [&](std::string_view k) { return std::optional<std::uint64_t>(amap->find(k)->second); });
+#endif
+#ifdef FST_BENCH_MARISA
+		timed(r_marisa, [&](std::string_view k) { return marisa_id(k); });
+#endif
 	}
 
-	std::printf("%-14s %14s %12s %14s %14s\n", "structure", "bytes", "bytes/key", "build Mkeys/s", "lookup p50 ns");
-	auto row = [&](const char* name, std::size_t b, double build, double ns) {
-		std::printf("%-14s %14zu %12.2f %14.2f %14.1f\n", name, b, double(b) / double(keys.size()), double(keys.size()) / build / 1e6, ns);
-	};
-	row("fst", m.bytes(), fst_build, fst_ns);
-	row("hash map", h.bytes(), hash_build, hash_ns);
-	row("front-coded", fc.bytes(), fc_build, fc_ns);
-	std::printf("\nfst / hash map: lookup %.2fx, bytes %.2f\n", fst_ns / hash_ns, double(m.bytes()) / double(h.bytes()));
+	std::printf("%-20s %14s %12s %14s %14s\n", "structure", "bytes", "bytes/key", "build Mkeys/s", "lookup p50 ns");
+	for (const auto& r : results) {
+		std::printf("%-20s %14zu %12.2f %14.2f %14.1f\n", r.name.c_str(), r.bytes, double(r.bytes) / double(keys.size()), double(keys.size()) / r.build_s / 1e6, r.lookup_ns);
+	}
+	std::printf("\nfst / hash map: lookup %.2fx, bytes %.2f\n", results[r_fst].lookup_ns / results[r_hash].lookup_ns, double(results[r_fst].bytes) / double(results[r_hash].bytes));
 
 	// Block-tree use: an FST over every 32nd key; floor() finds a key's block.
 	fst::builder bb;
@@ -189,6 +397,6 @@ int main(int argc, char** argv) {
 			return std::optional<std::uint64_t>(f.value_or(0));
 		}));
 	}
-	std::printf("block index (1/32 of the keys, floor): %zu bytes, %.1f ns per floor (%.2fx the hash map lookup)\n",
-		index.bytes(), floor_ns, floor_ns / hash_ns);
+	std::printf("block index (1/32 of the keys, floor): %zu bytes, %.2f bytes per key, %.1f ns per floor (%.2fx the hash map lookup)\n",
+		index.bytes(), double(index.bytes()) / double(keys.size()), floor_ns, floor_ns / results[r_hash].lookup_ns);
 }

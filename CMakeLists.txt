@@ -51,6 +51,22 @@ if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
   target_include_directories(fst_cmp_bench PRIVATE test)
   add_executable(fst_bench bench/bench.cc)
   target_link_libraries(fst_bench PRIVATE fst)
+  # fst_bench also times absl::flat_hash_map (found, e.g. Homebrew abseil) and marisa-trie
+  # (fetched at v0.3.1); neither is a dependency of the fst target.
+  option(FST_BENCH_COMPARATORS "Build fst_bench with absl::flat_hash_map and marisa-trie" OFF)
+  if(FST_BENCH_COMPARATORS)
+    include(FetchContent)
+    find_package(absl REQUIRED CONFIG)
+    set(ENABLE_TOOLS OFF CACHE BOOL "" FORCE)
+    set(BUILD_TESTING OFF CACHE BOOL "" FORCE)
+    FetchContent_Declare(marisa
+      GIT_REPOSITORY https://github.com/s-yata/marisa-trie.git
+      GIT_TAG 3e87d53b78e15f2f43783d5e376561a8c9722051) # v0.3.1
+    FetchContent_MakeAvailable(marisa)
+    target_link_libraries(fst_bench PRIVATE absl::flat_hash_map marisa)
+    target_include_directories(fst_bench PRIVATE "${marisa_SOURCE_DIR}/include")
+    target_compile_definitions(fst_bench PRIVATE FST_BENCH_ABSEIL FST_BENCH_MARISA)
+  endif()
   # Peak RSS of a build, the builder against the reference, one process per measurement.
   add_executable(fst_build_rss bench/build_rss.cc)
   target_link_libraries(fst_build_rss PRIVATE fst)

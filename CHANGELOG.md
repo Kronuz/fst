@@ -8,6 +8,12 @@ library has no releases.
 
 ### Added
 
+- `bench/bench.cc` times `std::map`, `std::unordered_map`, `absl::flat_hash_map` (found) and
+  marisa-trie v0.3.1 (fetched) beside `fst` and the bench's own hash map and front-coded
+  array, counts each structure's heap bytes, and aborts when any structure returns a
+  different ordinal for a key. The last two are built only with `-DFST_BENCH_COMPARATORS=ON`
+  and are not dependencies of the library. `docs/perf/comparators.md` has the method and every
+  row on the Apple M4 Pro and the Intel Core i9-9980HK.
 - `bench/build_rss.cc` (`fst_build_rss`): the peak resident set of a process that builds one
   FST from N random 12-letter keys, with the builder and with the reference builder, one
   process per measurement, and a check that both produce the same bytes. `fst_memory` counts

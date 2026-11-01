@@ -11,7 +11,7 @@ test/collide.cc  Builder bytes against the reference with FST_TEST_HASH_MASK=0 (
                  same_node() decides every registry hit; exhaustive over small key sets plus random sets.
 test/memory.cc   Peak heap (counted through operator new) of the builder against the reference builder over a
                  sweep of key counts.
-bench/bench.cc   FST vs open-addressing hash map vs front-coded array: bytes, build, lookup.
+bench/bench.cc   FST vs hash map, front-coded array, std::map, std::unordered_map (and with FST_BENCH_COMPARATORS absl, marisa-trie): bytes, build, lookup, same-ordinal check.
 bench/cmp_bench.cc  Build and for_each timings against test/fst_old.hh over a word list, then edge rows (builds from 1 to
                  300,000 keys, decimal, random and 200-byte keys, range, intersect, get), all with an A/A row.
 bench/build_rss.cc  Peak RSS of one build, the builder against the reference, one process per measurement (fst_build_rss).
